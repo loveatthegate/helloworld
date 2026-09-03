@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PGlite } from "@electric-sql/pglite";
@@ -20,9 +20,12 @@ async function createNetlifyDb() {
 
 async function applyLocalMigrations(client: PGlite) {
   const here = dirname(fileURLToPath(import.meta.url));
-  const sqlPath = join(here, "../netlify/database/migrations/0001_init.sql");
-  const sql = await readFile(sqlPath, "utf8");
-  await client.exec(sql);
+  const dir = join(here, "../netlify/database/migrations");
+  const files = (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort();
+  for (const name of files) {
+    const sql = await readFile(join(dir, name), "utf8");
+    await client.exec(sql);
+  }
 }
 
 async function createLocalDb() {

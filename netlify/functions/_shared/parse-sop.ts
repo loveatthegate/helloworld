@@ -4,7 +4,7 @@ import { getBlob } from "./blobs";
 import { extractSopContent } from "./extract";
 import { heuristicParseSop } from "./heuristic";
 import { parseSopJson, type ParsedSop } from "./json";
-import { generateVlmText, getVlmStatus, providerAvailable } from "./vlm";
+import { generateVlmText, getVlmStatus } from "./vlm";
 import { getModel } from "./models";
 
 const PARSE_PROMPT = `你是工业/现场作业 SOP 结构化助手。请阅读用户提供的作业指导书，抽取可用于现场履职检查的步骤清单。
@@ -58,8 +58,8 @@ export async function parseSopJob(sopId: number): Promise<void> {
     }
 
     const model = getModel(sop.modelUsed || "gemini-2.5-flash");
-    const status = getVlmStatus();
-    const canUseModel = providerAvailable(model.provider, status) && (Boolean(extracted.text) || extracted.images.length > 0);
+    const status = await getVlmStatus();
+    const canUseModel = status.ready && (Boolean(extracted.text) || extracted.images.length > 0);
 
     let parsed: ParsedSop;
     let modelUsed: string = model.id;

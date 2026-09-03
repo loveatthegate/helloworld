@@ -4,6 +4,7 @@ import { getSop, getSettings, reparseSop, type CheckItem, type Sop } from "../li
 import { formatDate } from "../lib/format";
 import { StatusBadge } from "../components/Badges";
 import { ModelSelect } from "../components/ModelSelect";
+import { useAuth } from "../lib/auth";
 
 function CheckCard({ item }: { item: CheckItem }) {
   const [open, setOpen] = useState(item.stepOrder <= 2);
@@ -53,6 +54,7 @@ function CheckCard({ item }: { item: CheckItem }) {
 }
 
 export function SopDetailPage() {
+  const { isAdmin } = useAuth();
   const { id } = useParams();
   const sopId = Number(id);
   const [data, setData] = useState<(Sop & { items: CheckItem[] }) | null>(null);
@@ -67,10 +69,14 @@ export function SopDetailPage() {
 
   useEffect(() => {
     void refresh();
-    getSettings().then((s) => {
-      setModels(s.availableModels);
-      setModel(s.defaultModel);
-    });
+    if (isAdmin) {
+      getSettings()
+        .then((s) => {
+          setModels(s.availableModels);
+          setModel(s.modelName || s.defaultModel);
+        })
+        .catch(() => undefined);
+    }
   }, [sopId]);
 
   useEffect(() => {
@@ -92,14 +98,15 @@ export function SopDetailPage() {
           </div>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">{data.summary}</p>
           <div className="mt-2 text-xs text-slate-400">
-            {data.originalFilename} · 模型 {data.modelUsed || "—"} · {formatDate(data.updatedAt)}
+            {data.originalFilename}
+            {isAdmin && data.modelUsed ? ` · 模型 ${data.modelUsed}` : ""} · {formatDate(data.updatedAt)}
           </div>
         </div>
         <Link
           to={`/analyses/new?sopId=${data.id}`}
           className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2"
         >
-          用此手册分析视频
+          用此手册分析
         </Link>
       </div>
 
@@ -123,22 +130,24 @@ export function SopDetailPage() {
         )}
       </div>
 
-      <section className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-        <h2 className="font-medium">重新解析</h2>
-        <p className="mt-1 text-sm text-slate-500">可换一个视觉/语言模型再抽一次检查项，历史视频报告仍绑定当前手册记录。</p>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <div className="min-w-64 flex-1">
-            <ModelSelect models={models} value={model} onChange={setModel} />
+      {isAdmin && (
+        <section className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <h2 className="font-medium">重新解析</h2>
+          <p className="mt-1 text-sm text-slate-500">可换一个视觉/语言模型再抽一次检查项。</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="min-w-64 flex-1">
+              <ModelSelect models={models} value={model} onChange={setModel} />
+            </div>
+            <button
+              type="button"
+              onClick={() => void reparseSop(sopId, model).then(() => refresh())}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+            >
+              重新解析
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => void reparseSop(sopId, model).then(() => refresh())}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-          >
-            重新解析
-          </button>
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   );
 }

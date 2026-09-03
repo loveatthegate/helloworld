@@ -3,17 +3,27 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import { getEnv } from "../../../db/env";
 import { getModel, type ChatContent, type VlmProvider } from "./models";
+import { getSettingsRow } from "./settings";
 
-export type VlmMode = "gateway" | "byok" | "none";
+export type VlmMode = "gateway" | "byok" | "settings" | "none";
 
 export type VlmStatus = {
   ready: boolean;
   mode: VlmMode;
+  provider?: string;
+  model?: string;
   providers: {
     gemini: boolean;
     openai: boolean;
     anthropic: boolean;
   };
+};
+
+export type VlmRuntime = {
+  provider: VlmProvider;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
 };
 
 function looksLikeGateway(): boolean {
@@ -26,45 +36,60 @@ function looksLikeGateway(): boolean {
   return urls.some((u) => Boolean(u && /netlify/i.test(u)));
 }
 
-export function getVlmStatus(): VlmStatus {
+export async function resolveVlmRuntime(modelOverride?: string): Promise<VlmRuntime> {
+  const settings = await getSettingsRow();
+  const fallback = getModel(modelOverride || settings.modelName || settings.defaultModel);
+  const provider = (settings.provider || fallback.provider) as VlmProvider;
+  return {
+    provider,
+    model: modelOverride || settings.modelName || settings.defaultModel || fallback.id,
+    apiKey: settings.apiKey || undefined,
+    baseUrl: settings.baseUrl || undefined,
+  };
+}
+
+export async function getVlmStatus(): Promise<VlmStatus> {
+  const runtime = await resolveVlmRuntime();
   const gateway = looksLikeGateway() || Boolean(getEnv("NETLIFY_AI_GATEWAY_KEY"));
-  const gemini = Boolean(getEnv("GEMINI_API_KEY"));
-  const openai = Boolean(getEnv("OPENAI_API_KEY"));
-  const anthropic = Boolean(getEnv("ANTHROPIC_API_KEY"));
-  const byok = gemini || openai || anthropic;
-  const ready = gateway || byok;
-  const mode: VlmMode = gateway ? "gateway" : byok ? "byok" : "none";
+  const envGemini = Boolean(getEnv("GEMINI_API_KEY"));
+  const envOpenAI = Boolean(getEnv("OPENAI_API_KEY"));
+  const envAnthropic = Boolean(getEnv("ANTHROPIC_API_KEY"));
+  const settingsReady = Boolean(runtime.apiKey) || gateway;
+  const byok = envGemini || envOpenAI || envAnthropic;
+  const ready = settingsReady || byok || gateway;
+  const mode: VlmMode = runtime.apiKey ? "settings" : gateway ? "gateway" : byok ? "byok" : "none";
   return {
     ready,
     mode,
+    provider: runtime.provider,
+    model: runtime.model,
     providers: {
-      gemini: gateway || gemini,
-      openai: gateway || openai,
-      anthropic: gateway || anthropic,
+      gemini: gateway || envGemini || (runtime.provider === "gemini" && Boolean(runtime.apiKey)),
+      openai: gateway || envOpenAI || (runtime.provider === "openai" && Boolean(runtime.apiKey)),
+      anthropic: gateway || envAnthropic || (runtime.provider === "anthropic" && Boolean(runtime.apiKey)),
     },
   };
 }
 
-export function providerAvailable(provider: VlmProvider, status = getVlmStatus()): boolean {
-  if (status.mode === "gateway") return true;
-  return status.providers[provider];
-}
-
-export async function generateVlmText(modelId: string, content: ChatContent): Promise<string> {
-  const model = getModel(modelId);
-  const status = getVlmStatus();
-  if (!providerAvailable(model.provider, status)) {
-    throw new Error(
-      `当前未配置 ${model.label} 所需密钥。请设置对应环境变量，或部署到 Netlify 并启用 AI Gateway。`,
-    );
+export async function generateVlmText(modelId: string | undefined, content: ChatContent): Promise<string> {
+  const runtime = await resolveVlmRuntime(modelId);
+  const status = await getVlmStatus();
+  if (!status.ready) {
+    throw new Error("尚未配置可用的视觉模型。请由超级管理员在系统设置中填写模型、接口地址与 API Key。");
   }
-  if (model.provider === "gemini") return generateGemini(model.id, content);
-  if (model.provider === "openai") return generateOpenAI(model.id, content);
-  return generateAnthropic(model.id, content);
+  if (runtime.provider === "gemini") return generateGemini(runtime, content);
+  if (runtime.provider === "openai") return generateOpenAI(runtime, content);
+  return generateAnthropic(runtime, content);
 }
 
-async function generateGemini(model: string, content: ChatContent): Promise<string> {
-  const apiKey = getEnv("GEMINI_API_KEY");
+export async function testVlmConnection(): Promise<{ ok: true; sample: string; model: string; provider: string }> {
+  const runtime = await resolveVlmRuntime();
+  const text = await generateVlmText(runtime.model, { text: "只回复一个词：pong" });
+  return { ok: true, sample: text.slice(0, 80), model: runtime.model, provider: runtime.provider };
+}
+
+async function generateGemini(runtime: VlmRuntime, content: ChatContent): Promise<string> {
+  const apiKey = runtime.apiKey || getEnv("GEMINI_API_KEY");
   const ai = new GoogleGenAI(apiKey ? { apiKey } : {});
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
     { text: content.text },
@@ -73,7 +98,7 @@ async function generateGemini(model: string, content: ChatContent): Promise<stri
     parts.push({ inlineData: { mimeType: image.mimeType, data: image.base64 } });
   }
   const response = await ai.models.generateContent({
-    model,
+    model: runtime.model,
     contents: [{ role: "user", parts }],
   });
   const text = response.text;
@@ -81,10 +106,14 @@ async function generateGemini(model: string, content: ChatContent): Promise<stri
   return text;
 }
 
-async function generateOpenAI(model: string, content: ChatContent): Promise<string> {
+async function generateOpenAI(runtime: VlmRuntime, content: ChatContent): Promise<string> {
   const client = new OpenAI({
-    ...(getEnv("OPENAI_API_KEY") ? { apiKey: getEnv("OPENAI_API_KEY") } : {}),
-    ...(getEnv("OPENAI_BASE_URL") ? { baseURL: getEnv("OPENAI_BASE_URL") } : {}),
+    ...(runtime.apiKey || getEnv("OPENAI_API_KEY")
+      ? { apiKey: runtime.apiKey || getEnv("OPENAI_API_KEY") }
+      : {}),
+    ...(runtime.baseUrl || getEnv("OPENAI_BASE_URL")
+      ? { baseURL: runtime.baseUrl || getEnv("OPENAI_BASE_URL") }
+      : {}),
   });
   const parts: OpenAI.Chat.ChatCompletionContentPart[] = [{ type: "text", text: content.text }];
   for (const image of content.images ?? []) {
@@ -94,7 +123,7 @@ async function generateOpenAI(model: string, content: ChatContent): Promise<stri
     });
   }
   const completion = await client.chat.completions.create({
-    model,
+    model: runtime.model,
     temperature: 0.1,
     messages: [{ role: "user", content: parts }],
   });
@@ -103,10 +132,14 @@ async function generateOpenAI(model: string, content: ChatContent): Promise<stri
   return text;
 }
 
-async function generateAnthropic(model: string, content: ChatContent): Promise<string> {
+async function generateAnthropic(runtime: VlmRuntime, content: ChatContent): Promise<string> {
   const client = new Anthropic({
-    ...(getEnv("ANTHROPIC_API_KEY") ? { apiKey: getEnv("ANTHROPIC_API_KEY") } : {}),
-    ...(getEnv("ANTHROPIC_BASE_URL") ? { baseURL: getEnv("ANTHROPIC_BASE_URL") } : {}),
+    ...(runtime.apiKey || getEnv("ANTHROPIC_API_KEY")
+      ? { apiKey: runtime.apiKey || getEnv("ANTHROPIC_API_KEY") }
+      : {}),
+    ...(runtime.baseUrl || getEnv("ANTHROPIC_BASE_URL")
+      ? { baseURL: runtime.baseUrl || getEnv("ANTHROPIC_BASE_URL") }
+      : {}),
   });
   const parts: Anthropic.ContentBlockParam[] = [];
   for (const image of content.images ?? []) {
@@ -118,7 +151,7 @@ async function generateAnthropic(model: string, content: ChatContent): Promise<s
   }
   parts.push({ type: "text", text: content.text });
   const message = await client.messages.create({
-    model,
+    model: runtime.model,
     max_tokens: 4096,
     temperature: 0.1,
     messages: [{ role: "user", content: parts }],

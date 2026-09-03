@@ -4,24 +4,26 @@ import { BookOpen, ClipboardCheck, Plus } from "lucide-react";
 import { getDashboard, type Analysis, type VlmStatus } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { ResultText, StatusBadge } from "../components/Badges";
+import { useAuth } from "../lib/auth";
 
 function VlmBanner({ vlm }: { vlm: VlmStatus }) {
+  if (vlm.mode === "hidden") return null;
   if (vlm.mode === "none") {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        尚未检测到视觉模型密钥。SOP 文本手册会先用本地规则抽出检查项；视频比对需要配置
-        GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY，或部署到 Netlify 启用 AI Gateway。
+        尚未配置视觉模型。请在系统设置中填写供应商、模型名称与 API Key，并点击「测试模型连接」。
       </div>
     );
   }
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-      视觉模型已就绪（{vlm.mode === "gateway" ? "Netlify AI Gateway" : "本地供应商密钥"}）。可在设置中切换 Gemini / GPT / Claude。
+      视觉模型已就绪（{vlm.mode}{vlm.model ? ` · ${vlm.model}` : ""}）。
     </div>
   );
 }
 
 export function DashboardPage() {
+  const { isAdmin } = useAuth();
   const [data, setData] = useState<Awaited<ReturnType<typeof getDashboard>> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,12 +51,12 @@ export function DashboardPage() {
             <Plus size={16} /> 上传 SOP
           </Link>
           <Link to="/analyses/new" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">
-            分析视频
+            履职分析
           </Link>
         </div>
       </div>
 
-      <VlmBanner vlm={data.vlm} />
+      {isAdmin && <VlmBanner vlm={data.vlm} />}
 
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => (

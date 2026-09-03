@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { FileDrop } from "../components/FileDrop";
 import { ModelSelect } from "../components/ModelSelect";
 import { api, getSettings, type Settings } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 export function SopNewPage() {
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
@@ -14,11 +16,12 @@ export function SopNewPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isAdmin) return;
     getSettings().then((s) => {
       setSettings(s);
-      setModel(s.defaultModel);
-    });
-  }, []);
+      setModel(s.modelName || s.defaultModel);
+    }).catch(() => undefined);
+  }, [isAdmin]);
 
   const submit = async () => {
     if (!file) {
@@ -68,7 +71,7 @@ export function SopNewPage() {
         label="拖入或选择手册文件"
         hint="演示阶段请小于 5.5MB"
         file={file}
-        onFile={setFile}
+        onFile={(next) => setFile(next)}
       />
       <div className="grid gap-4 rounded-2xl bg-white p-5 ring-1 ring-slate-200">
         <label className="text-sm">
@@ -80,12 +83,11 @@ export function SopNewPage() {
             placeholder="默认使用文件名"
           />
         </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-slate-600">解析模型</span>
-          <ModelSelect models={settings?.availableModels ?? []} value={model} onChange={setModel} />
-        </label>
-        {settings?.vlm.mode === "none" && (
-          <p className="text-xs text-amber-700">未配置 VLM 时，文本手册会先用本地规则抽取检查项，便于验证界面。</p>
+        {isAdmin && (
+          <label className="text-sm">
+            <span className="mb-1 block text-slate-600">解析模型</span>
+            <ModelSelect models={settings?.availableModels ?? []} value={model} onChange={setModel} />
+          </label>
         )}
       </div>
       {error && <p className="text-rose-600 text-sm">{error}</p>}

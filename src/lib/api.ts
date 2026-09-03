@@ -1,7 +1,16 @@
+export type AuthUser = {
+  id: number;
+  username: string;
+  displayName: string;
+  role: "super_admin" | "user";
+};
+
 export type VlmStatus = {
   ready: boolean;
-  mode: "gateway" | "byok" | "none";
-  providers: { gemini: boolean; openai: boolean; anthropic: boolean };
+  mode: "gateway" | "byok" | "settings" | "none" | "hidden" | string;
+  provider?: string;
+  model?: string;
+  providers?: { gemini: boolean; openai: boolean; anthropic: boolean };
 };
 
 export type VlmModel = {
@@ -13,9 +22,15 @@ export type VlmModel = {
 
 export type Settings = {
   defaultModel: string;
+  provider: string;
+  modelName: string;
+  apiKeyMasked: string;
+  hasApiKey: boolean;
+  baseUrl: string;
   frameIntervalSec: number;
   maxFrames: number;
   availableModels: VlmModel[];
+  intervals: number[];
   vlm: VlmStatus;
 };
 
@@ -25,13 +40,14 @@ export type Sop = {
   originalFilename: string;
   contentType: string;
   blobKey: string;
-  status: "uploaded" | "parsing" | "ready" | "failed" | string;
+  status: string;
   summary: string | null;
-  modelUsed: string | null;
+  modelUsed?: string | null;
   parseError: string | null;
   createdAt: string;
   updatedAt: string;
   checkItemCount?: number;
+  ownerName?: string;
 };
 
 export type CheckItem = {
@@ -50,12 +66,13 @@ export type Analysis = {
   id: number;
   sopId: number;
   title: string;
+  sourceType?: "video" | "images" | string;
   videoFilename: string;
   videoBlobKey: string | null;
   videoDurationSec: number | null;
   frameIntervalSec: number;
   maxFrames: number;
-  modelUsed: string;
+  modelUsed?: string;
   status: string;
   overallResult: string | null;
   overallSummary: string | null;
@@ -63,6 +80,11 @@ export type Analysis = {
   createdAt: string;
   completedAt: string | null;
   sopTitle?: string;
+  ownerName?: string;
+  failCount?: number;
+  passCount?: number;
+  coverUrl?: string | null;
+  videoUrl?: string | null;
 };
 
 export type Frame = {
@@ -84,7 +106,16 @@ export type ItemResult = {
 };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const res = await fetch(path, {
+    ...init,
+    credentials: "include",
+    headers: init?.body instanceof FormData ? init.headers : { ...(init?.headers || {}) },
+  });
+  if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/me")) {
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+  }
   if (!res.ok) {
     const err = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
     throw new Error(err.error || `请求失败 (${res.status})`);
@@ -92,10 +123,42 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export const login = (username: string, password: string) =>
+  api<{ user: AuthUser }>("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+export const logout = () => api<{ ok: boolean }>("/api/logout", { method: "POST" });
+export const getMe = () =>
+  api<{ user: AuthUser; defaults: { frameIntervalSec: number; maxFrames: number; intervals: number[] } }>("/api/me");
+
 export const getSettings = () => api<Settings>("/api/settings");
-export const saveSettings = (body: Partial<Settings>) =>
+export const saveSettings = (body: Record<string, unknown>) =>
   api<Settings>("/api/settings", {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const testSettings = () =>
+  api<{ ok: boolean; sample?: string; model?: string; provider?: string; error?: string }>("/api/settings/test", {
+    method: "POST",
+  });
+
+export const listUsers = () =>
+  api<Array<{ id: number; username: string; displayName: string; role: string; isActive: boolean; createdAt: string }>>(
+    "/api/users",
+  );
+export const createUser = (body: { username: string; displayName: string; password: string }) =>
+  api("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const patchUser = (id: number, body: { displayName?: string; isActive?: boolean; password?: string }) =>
+  api(`/api/users/${id}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

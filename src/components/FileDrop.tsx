@@ -7,26 +7,52 @@ export function FileDrop({
   label,
   hint,
   file,
+  files,
+  multiple,
   onFile,
+  onFiles,
 }: {
   accept: string;
   label: string;
   hint: string;
-  file: File | null;
-  onFile: (file: File) => void;
+  file?: File | null;
+  files?: File[];
+  multiple?: boolean;
+  onFile?: (file: File) => void;
+  onFiles?: (files: File[]) => void;
 }) {
   const [over, setOver] = useState(false);
 
+  const apply = (list: FileList | File[] | null) => {
+    if (!list || list.length === 0) return;
+    const next = Array.from(list);
+    if (multiple) onFiles?.(next);
+    else onFile?.(next[0]!);
+  };
+
   const pick = (event: ChangeEvent<HTMLInputElement>) => {
-    const next = event.target.files?.[0];
-    if (next) onFile(next);
+    apply(event.target.files);
   };
   const drop = (event: DragEvent) => {
     event.preventDefault();
     setOver(false);
-    const next = event.dataTransfer.files?.[0];
-    if (next) onFile(next);
+    apply(event.dataTransfer.files);
   };
+
+  const summary = multiple
+    ? files?.length
+      ? `${files.length} 个文件，共 ${(files.reduce((s, f) => s + f.size, 0) / 1024 / 1024).toFixed(2)} MB`
+      : hint
+    : file
+      ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
+      : hint;
+  const title = multiple
+    ? files?.length
+      ? files.map((f) => f.name).join("、")
+      : label
+    : file
+      ? file.name
+      : label;
 
   return (
     <label
@@ -41,11 +67,9 @@ export function FileDrop({
       }`}
     >
       <Upload className="mb-3 text-teal" />
-      <div className="font-medium text-slate-800">{file ? file.name : label}</div>
-      <div className="mt-1 text-sm text-slate-500">
-        {file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : hint}
-      </div>
-      <input type="file" accept={accept} className="hidden" onChange={pick} />
+      <div className="font-medium text-slate-800">{title}</div>
+      <div className="mt-1 text-sm text-slate-500">{summary}</div>
+      <input type="file" accept={accept} className="hidden" multiple={multiple} onChange={pick} />
     </label>
   );
 }

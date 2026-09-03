@@ -40,6 +40,7 @@ export const analysisResultSchema = z.object({
       confidence: z.number().min(0).max(1).optional().default(0.5),
       reasoning: z.string().optional().default(""),
       evidenceFrameIndex: z.number().int().min(0).optional(),
+      evidenceFrameIndexes: z.array(z.number().int().min(0)).optional(),
       observedAtSec: z.number().optional(),
     }),
   ),

@@ -1,114 +1,367 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { eq, desc, asc, count } from "drizzle-orm";
+import { getCookie } from "hono/cookie";
+import { and, asc, count, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "../../../db/index";
 import { getBlob, putBlob } from "./blobs";
 import { parseSopJob } from "./parse-sop";
 import { analyzeVideoJob } from "./analyze-video";
 import { enqueueAnalyze, enqueueParse } from "./jobs";
 import { VLM_MODELS, getModel } from "./models";
-import { getVlmStatus } from "./vlm";
+import { getVlmStatus, testVlmConnection } from "./vlm";
+import {
+  attachSession,
+  canSee,
+  clearSessionCookie,
+  createSession,
+  destroySession,
+  ensureAdmin,
+  isAdmin,
+  publicUser,
+  SESSION_COOKIE,
+  toAuthUser,
+  userFromRequest,
+  type AuthUser,
+} from "./auth";
+import { hashPassword, verifyPassword } from "./password";
+import { ALLOWED_INTERVALS, getSettingsRow, maskKey, normalizeInterval } from "./settings";
 
-const app = new Hono().basePath("/api");
-app.use("*", cors());
+type Env = { Variables: { user: AuthUser } };
+const app = new Hono<Env>().basePath("/api");
+
+app.use(
+  "*",
+  cors({
+    origin: (origin) => origin || "*",
+    credentials: true,
+  }),
+);
 
 app.onError((err, c) => {
   console.error(err);
   return c.json({ error: err instanceof Error ? err.message : "服务器错误" }, 500);
 });
 
+function isPublicApiPath(path: string) {
+  const normalized = path.replace(/\/+$/, "") || "/";
+  return (
+    normalized === "/login" ||
+    normalized === "/health" ||
+    normalized === "/api/login" ||
+    normalized === "/api/health"
+  );
+}
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS" || isPublicApiPath(c.req.path)) {
+    await next();
+    return;
+  }
+  const user = await userFromRequest(c);
+  if (!user) return c.json({ error: "请先登录" }, 401);
+  c.set("user", user);
+  await next();
+});
+
 function filenameFrom(file: File, fallback: string) {
   return file.name || fallback;
 }
 
-async function getSettingsRow() {
+function fileUrl(key: string) {
+  return `/api/files?key=${encodeURIComponent(key)}`;
+}
+
+async function requireOwnedSop(user: AuthUser, id: number) {
   const db = await getDb();
-  const [row] = await db.select().from(schema.appSettings).limit(1);
-  if (row) return row;
-  const [created] = await db
-    .insert(schema.appSettings)
-    .values({
-      defaultModel: "gemini-2.5-flash",
-      frameIntervalSec: 2,
-      maxFrames: 30,
-    })
-    .returning();
-  return created;
+  const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, id)).limit(1);
+  if (!sop || !canSee(user, sop.userId)) return null;
+  return sop;
+}
+
+async function requireOwnedAnalysis(user: AuthUser, id: number) {
+  const db = await getDb();
+  const [row] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, id)).limit(1);
+  if (!row || !canSee(user, row.userId)) return null;
+  return row;
+}
+
+async function analysisExtras(row: typeof schema.analyses.$inferSelect) {
+  const db = await getDb();
+  const frames = await db
+    .select()
+    .from(schema.analysisFrames)
+    .where(eq(schema.analysisFrames.analysisId, row.id))
+    .orderBy(asc(schema.analysisFrames.frameIndex));
+  const results = await db
+    .select()
+    .from(schema.analysisItemResults)
+    .where(eq(schema.analysisItemResults.analysisId, row.id));
+  const failCount = results.filter((r) => r.verdict === "fail").length;
+  const passCount = results.filter((r) => r.verdict === "pass").length;
+  const fail = results.find((r) => r.verdict === "fail");
+  const evidenceId = fail?.evidenceFrameIds?.[0];
+  const cover =
+    (evidenceId ? frames.find((f) => f.id === evidenceId) : undefined) ??
+    frames[0] ??
+    null;
+  return {
+    failCount,
+    passCount,
+    coverUrl: cover ? fileUrl(cover.blobKey) : null,
+    videoUrl: row.videoBlobKey ? `/api/analyses/${row.id}/media` : null,
+  };
+}
+
+function sanitizeAnalysis(user: AuthUser, row: typeof schema.analyses.$inferSelect) {
+  return {
+    ...row,
+    modelUsed: isAdmin(user) ? row.modelUsed : undefined,
+  };
 }
 
 app.get("/health", async (c) => {
-  return c.json({ ok: true, vlm: getVlmStatus() });
+  return c.json({ ok: true, vlm: await getVlmStatus() });
+});
+
+app.post("/login", async (c) => {
+  await ensureAdmin();
+  const body = await c.req.json<{ username?: string; password?: string }>();
+  if (!body.username || !body.password) return c.json({ error: "请输入用户名和密码" }, 400);
+  const db = await getDb();
+  const [user] = await db.select().from(schema.users).where(eq(schema.users.username, body.username.trim())).limit(1);
+  if (!user || !user.isActive || !verifyPassword(body.password, user.passwordHash)) {
+    return c.json({ error: "用户名或密码错误" }, 401);
+  }
+  const token = await createSession(user.id);
+  attachSession(c, token);
+  return c.json({ user: publicUser(toAuthUser(user)) });
+});
+
+app.post("/logout", async (c) => {
+  await destroySession(getCookie(c, SESSION_COOKIE));
+  clearSessionCookie(c);
+  return c.json({ ok: true });
+});
+
+app.get("/me", async (c) => {
+  const user = c.get("user");
+  const settings = await getSettingsRow();
+  return c.json({
+    user: publicUser(user),
+    defaults: {
+      frameIntervalSec: normalizeInterval(settings.frameIntervalSec),
+      maxFrames: settings.maxFrames,
+      intervals: ALLOWED_INTERVALS,
+    },
+  });
+});
+
+app.put("/me/password", async (c) => {
+  const user = c.get("user");
+  const body = await c.req.json<{ oldPassword?: string; newPassword?: string }>();
+  if (!body.oldPassword || !body.newPassword || body.newPassword.length < 6) {
+    return c.json({ error: "请填写原密码，且新密码不少于 6 位" }, 400);
+  }
+  const db = await getDb();
+  const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id)).limit(1);
+  if (!row || !verifyPassword(body.oldPassword, row.passwordHash)) {
+    return c.json({ error: "原密码不正确" }, 400);
+  }
+  await db.update(schema.users).set({ passwordHash: hashPassword(body.newPassword) }).where(eq(schema.users.id, user.id));
+  return c.json({ ok: true });
+});
+
+app.get("/users", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可管理用户" }, 403);
+  const db = await getDb();
+  const rows = await db.select().from(schema.users).orderBy(asc(schema.users.id));
+  return c.json(
+    rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      displayName: row.displayName,
+      role: row.role,
+      isActive: row.isActive,
+      createdAt: row.createdAt,
+    })),
+  );
+});
+
+app.post("/users", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可管理用户" }, 403);
+  const body = await c.req.json<{ username?: string; displayName?: string; password?: string }>();
+  if (!body.username || !body.password) return c.json({ error: "请填写用户名和密码" }, 400);
+  const db = await getDb();
+  try {
+    const [created] = await db
+      .insert(schema.users)
+      .values({
+        username: body.username.trim(),
+        displayName: body.displayName?.trim() || body.username.trim(),
+        passwordHash: hashPassword(body.password),
+        role: "user",
+        isActive: true,
+      })
+      .returning();
+    return c.json(
+      {
+        id: created.id,
+        username: created.username,
+        displayName: created.displayName,
+        role: created.role,
+        isActive: created.isActive,
+        createdAt: created.createdAt,
+      },
+      201,
+    );
+  } catch {
+    return c.json({ error: "用户名已存在" }, 409);
+  }
+});
+
+app.patch("/users/:id", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可管理用户" }, 403);
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ displayName?: string; isActive?: boolean; password?: string }>();
+  const db = await getDb();
+  const [target] = await db.select().from(schema.users).where(eq(schema.users.id, id)).limit(1);
+  if (!target) return c.json({ error: "用户不存在" }, 404);
+  if (target.role === "super_admin" && body.isActive === false) {
+    return c.json({ error: "不能停用唯一的超级管理员" }, 400);
+  }
+  const [updated] = await db
+    .update(schema.users)
+    .set({
+      displayName: body.displayName ?? target.displayName,
+      isActive: body.isActive ?? target.isActive,
+      passwordHash: body.password ? hashPassword(body.password) : target.passwordHash,
+    })
+    .where(eq(schema.users.id, id))
+    .returning();
+  return c.json({
+    id: updated.id,
+    username: updated.username,
+    displayName: updated.displayName,
+    role: updated.role,
+    isActive: updated.isActive,
+    createdAt: updated.createdAt,
+  });
 });
 
 app.get("/settings", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可查看系统设置" }, 403);
   const settings = await getSettingsRow();
   return c.json({
     defaultModel: settings.defaultModel,
-    frameIntervalSec: settings.frameIntervalSec,
+    provider: settings.provider,
+    modelName: settings.modelName,
+    apiKeyMasked: maskKey(settings.apiKey),
+    hasApiKey: Boolean(settings.apiKey),
+    baseUrl: settings.baseUrl || "",
+    frameIntervalSec: normalizeInterval(settings.frameIntervalSec),
     maxFrames: settings.maxFrames,
     availableModels: VLM_MODELS,
-    vlm: getVlmStatus(),
+    intervals: ALLOWED_INTERVALS,
+    vlm: await getVlmStatus(),
   });
 });
 
 app.put("/settings", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可修改系统设置" }, 403);
   const body = await c.req.json<{
-    defaultModel?: string;
+    provider?: string;
+    modelName?: string;
+    apiKey?: string;
+    baseUrl?: string;
     frameIntervalSec?: number;
     maxFrames?: number;
+    defaultModel?: string;
   }>();
   const db = await getDb();
   const current = await getSettingsRow();
-  const defaultModel = body.defaultModel ? getModel(body.defaultModel).id : current.defaultModel;
-  const frameIntervalSec = Number(body.frameIntervalSec ?? current.frameIntervalSec);
-  const maxFrames = Math.min(60, Math.max(4, Number(body.maxFrames ?? current.maxFrames)));
+  const keepKey = !body.apiKey || body.apiKey.includes("•") || body.apiKey.includes("*");
+  const modelName = body.modelName?.trim() || current.modelName;
   const [updated] = await db
     .update(schema.appSettings)
     .set({
-      defaultModel,
-      frameIntervalSec,
-      maxFrames,
+      provider: body.provider || current.provider,
+      modelName,
+      defaultModel: body.defaultModel || modelName,
+      apiKey: keepKey ? current.apiKey : body.apiKey,
+      baseUrl: body.baseUrl === undefined ? current.baseUrl : body.baseUrl || null,
+      frameIntervalSec: normalizeInterval(body.frameIntervalSec ?? current.frameIntervalSec),
+      maxFrames: Math.min(60, Math.max(4, Number(body.maxFrames ?? current.maxFrames))),
       updatedAt: new Date(),
     })
     .where(eq(schema.appSettings.id, current.id))
     .returning();
   return c.json({
     defaultModel: updated.defaultModel,
-    frameIntervalSec: updated.frameIntervalSec,
+    provider: updated.provider,
+    modelName: updated.modelName,
+    apiKeyMasked: maskKey(updated.apiKey),
+    hasApiKey: Boolean(updated.apiKey),
+    baseUrl: updated.baseUrl || "",
+    frameIntervalSec: normalizeInterval(updated.frameIntervalSec),
     maxFrames: updated.maxFrames,
     availableModels: VLM_MODELS,
-    vlm: getVlmStatus(),
+    intervals: ALLOWED_INTERVALS,
+    vlm: await getVlmStatus(),
   });
 });
 
+app.post("/settings/test", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可测试模型" }, 403);
+  try {
+    const result = await testVlmConnection();
+    return c.json(result);
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : "连接失败" }, 400);
+  }
+});
+
 app.get("/sops", async (c) => {
+  const user = c.get("user");
   const db = await getDb();
-  const rows = await db.select().from(schema.sops).orderBy(desc(schema.sops.createdAt));
+  const rows = isAdmin(user)
+    ? await db.select().from(schema.sops).orderBy(desc(schema.sops.createdAt))
+    : await db.select().from(schema.sops).where(eq(schema.sops.userId, user.id)).orderBy(desc(schema.sops.createdAt));
   const itemCounts = await db
-    .select({
-      sopId: schema.sopCheckItems.sopId,
-      total: count(),
-    })
+    .select({ sopId: schema.sopCheckItems.sopId, total: count() })
     .from(schema.sopCheckItems)
     .groupBy(schema.sopCheckItems.sopId);
   const countMap = new Map(itemCounts.map((r) => [r.sopId, Number(r.total)]));
+  const owners = await db.select().from(schema.users);
+  const ownerMap = new Map(owners.map((u) => [u.id, u.displayName]));
   return c.json(
     rows.map((row) => ({
       ...row,
+      modelUsed: isAdmin(user) ? row.modelUsed : undefined,
       checkItemCount: countMap.get(row.id) ?? 0,
+      ownerName: isAdmin(user) ? ownerMap.get(row.userId ?? 0) : undefined,
     })),
   );
 });
 
 app.post("/sops", async (c) => {
+  const user = c.get("user");
   const form = await c.req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return c.json({ error: "请上传 SOP 文件" }, 400);
   const title = String(form.get("title") || file.name.replace(/\.[^.]+$/, ""));
-  const model = getModel(String(form.get("model") || (await getSettingsRow()).defaultModel)).id;
+  const settings = await getSettingsRow();
+  const model = isAdmin(user)
+    ? getModel(String(form.get("model") || settings.modelName || settings.defaultModel)).id
+    : settings.modelName || settings.defaultModel;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.byteLength > 5.5 * 1024 * 1024) {
-    return c.json({ error: "演示阶段单份 SOP 请小于 5.5MB" }, 413);
+    return c.json({ error: "单份 SOP 请小于 5.5MB" }, 413);
   }
   const db = await getDb();
   const blobKey = `sops/${Date.now()}-${filenameFrom(file, "sop.bin")}`;
@@ -116,6 +369,7 @@ app.post("/sops", async (c) => {
   const [created] = await db
     .insert(schema.sops)
     .values({
+      userId: user.id,
       title,
       originalFilename: file.name,
       contentType: file.type || "application/octet-stream",
@@ -129,40 +383,53 @@ app.post("/sops", async (c) => {
 });
 
 app.get("/sops/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  const db = await getDb();
-  const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, id)).limit(1);
+  const user = c.get("user");
+  const sop = await requireOwnedSop(user, Number(c.req.param("id")));
   if (!sop) return c.json({ error: "手册不存在" }, 404);
+  const db = await getDb();
   const items = await db
     .select()
     .from(schema.sopCheckItems)
-    .where(eq(schema.sopCheckItems.sopId, id))
+    .where(eq(schema.sopCheckItems.sopId, sop.id))
     .orderBy(asc(schema.sopCheckItems.stepOrder));
-  return c.json({ ...sop, items });
+  return c.json({ ...sop, modelUsed: isAdmin(user) ? sop.modelUsed : undefined, items });
 });
 
 app.post("/sops/:id/parse", async (c) => {
-  const id = Number(c.req.param("id"));
+  const user = c.get("user");
+  const sop = await requireOwnedSop(user, Number(c.req.param("id")));
+  if (!sop) return c.json({ error: "手册不存在" }, 404);
   const body = await c.req.json<{ model?: string }>().catch(() => ({}) as { model?: string });
   const db = await getDb();
-  const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, id)).limit(1);
-  if (!sop) return c.json({ error: "手册不存在" }, 404);
-  if (body.model) {
-    await db
-      .update(schema.sops)
-      .set({ modelUsed: getModel(body.model).id, status: "parsing", updatedAt: new Date() })
-      .where(eq(schema.sops.id, id));
-  } else {
-    await db.update(schema.sops).set({ status: "parsing", updatedAt: new Date() }).where(eq(schema.sops.id, id));
-  }
-  enqueueParse(id, parseSopJob);
-  const [updated] = await db.select().from(schema.sops).where(eq(schema.sops.id, id)).limit(1);
+  const settings = await getSettingsRow();
+  const model = isAdmin(user) && body.model ? getModel(body.model).id : settings.modelName || settings.defaultModel;
+  await db
+    .update(schema.sops)
+    .set({ modelUsed: model, status: "parsing", updatedAt: new Date() })
+    .where(eq(schema.sops.id, sop.id));
+  enqueueParse(sop.id, parseSopJob);
+  const [updated] = await db.select().from(schema.sops).where(eq(schema.sops.id, sop.id)).limit(1);
   return c.json(updated);
 });
 
 app.get("/files", async (c) => {
+  const user = c.get("user");
   const key = c.req.query("key");
   if (!key) return c.json({ error: "缺少 key" }, 400);
+  const db = await getDb();
+  if (!isAdmin(user)) {
+    const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.blobKey, key)).limit(1);
+    const [analysis] = await db.select().from(schema.analyses).where(eq(schema.analyses.videoBlobKey, key)).limit(1);
+    const [frame] = await db.select().from(schema.analysisFrames).where(eq(schema.analysisFrames.blobKey, key)).limit(1);
+    let allowed = false;
+    if (sop) allowed = sop.userId === user.id;
+    if (analysis) allowed = analysis.userId === user.id;
+    if (frame) {
+      const [owner] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, frame.analysisId)).limit(1);
+      allowed = owner?.userId === user.id;
+    }
+    if (!allowed) return c.json({ error: "无权访问该文件" }, 403);
+  }
   const blob = await getBlob(key);
   if (!blob) return c.json({ error: "文件不存在" }, 404);
   return new Response(blob.data, {
@@ -174,49 +441,65 @@ app.get("/files", async (c) => {
 });
 
 app.get("/dashboard", async (c) => {
+  const user = c.get("user");
   const db = await getDb();
-  const [sopCount] = await db.select({ total: count() }).from(schema.sops);
-  const [readyCount] = await db
-    .select({ total: count() })
-    .from(schema.sops)
-    .where(eq(schema.sops.status, "ready"));
-  const [analysisCount] = await db.select({ total: count() }).from(schema.analyses);
-  const [completedCount] = await db
-    .select({ total: count() })
-    .from(schema.analyses)
-    .where(eq(schema.analyses.status, "completed"));
-  const recent = await db
-    .select()
-    .from(schema.analyses)
-    .orderBy(desc(schema.analyses.createdAt))
-    .limit(6);
+  const sopFilter = isAdmin(user) ? undefined : eq(schema.sops.userId, user.id);
+  const analysisFilter = isAdmin(user) ? undefined : eq(schema.analyses.userId, user.id);
+  const sopQuery = db.select({ total: count() }).from(schema.sops);
+  const readyQuery = db.select({ total: count() }).from(schema.sops).where(eq(schema.sops.status, "ready"));
+  const analysisQuery = db.select({ total: count() }).from(schema.analyses);
+  const completedQuery = db.select({ total: count() }).from(schema.analyses).where(eq(schema.analyses.status, "completed"));
+  const [sopCount] = sopFilter ? await sopQuery.where(sopFilter) : await sopQuery;
+  const [readyCount] = isAdmin(user)
+    ? await readyQuery
+    : await db.select({ total: count() }).from(schema.sops).where(and(eq(schema.sops.status, "ready"), eq(schema.sops.userId, user.id)));
+  const [analysisCount] = analysisFilter ? await analysisQuery.where(analysisFilter) : await analysisQuery;
+  const [completedCount] = isAdmin(user)
+    ? await completedQuery
+    : await db
+        .select({ total: count() })
+        .from(schema.analyses)
+        .where(and(eq(schema.analyses.status, "completed"), eq(schema.analyses.userId, user.id)));
+  const recent = isAdmin(user)
+    ? await db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt)).limit(6)
+    : await db.select().from(schema.analyses).where(eq(schema.analyses.userId, user.id)).orderBy(desc(schema.analyses.createdAt)).limit(6);
   return c.json({
     sops: Number(sopCount.total),
     sopsReady: Number(readyCount.total),
     analyses: Number(analysisCount.total),
     analysesCompleted: Number(completedCount.total),
-    recent,
-    vlm: getVlmStatus(),
+    recent: recent.map((row) => sanitizeAnalysis(user, row)),
+    vlm: isAdmin(user) ? await getVlmStatus() : { ready: (await getVlmStatus()).ready, mode: "hidden" },
   });
 });
 
 app.get("/analyses", async (c) => {
+  const user = c.get("user");
   const db = await getDb();
-  const rows = await db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt));
+  const rows = isAdmin(user)
+    ? await db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt))
+    : await db.select().from(schema.analyses).where(eq(schema.analyses.userId, user.id)).orderBy(desc(schema.analyses.createdAt));
   const sops = await db.select().from(schema.sops);
   const sopMap = new Map(sops.map((s) => [s.id, s]));
+  const owners = await db.select().from(schema.users);
+  const ownerMap = new Map(owners.map((u) => [u.id, u.displayName]));
+  const extras = await Promise.all(rows.map((row) => analysisExtras(row)));
   return c.json(
-    rows.map((row) => ({
-      ...row,
+    rows.map((row, index) => ({
+      ...sanitizeAnalysis(user, row),
       sopTitle: sopMap.get(row.sopId)?.title ?? "",
+      ownerName: isAdmin(user) ? ownerMap.get(row.userId ?? 0) : undefined,
+      ...extras[index],
     })),
   );
 });
 
 app.post("/analyses", async (c) => {
+  const user = c.get("user");
   const body = await c.req.json<{
     sopId: number;
     title?: string;
+    sourceType?: "video" | "images";
     videoFilename: string;
     videoDurationSec?: number;
     frameIntervalSec?: number;
@@ -224,23 +507,26 @@ app.post("/analyses", async (c) => {
     model?: string;
   }>();
   if (!body.sopId || !body.videoFilename) {
-    return c.json({ error: "请选择 SOP 并提供视频文件名" }, 400);
+    return c.json({ error: "请选择 SOP 并提供文件名" }, 400);
   }
-  const db = await getDb();
-  const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, body.sopId)).limit(1);
-  if (!sop) return c.json({ error: "手册不存在" }, 404);
+  const sop = await requireOwnedSop(user, body.sopId);
+  if (!sop) return c.json({ error: "手册不存在或无权使用" }, 404);
   if (sop.status !== "ready") return c.json({ error: "请先等待手册解析完成" }, 400);
   const settings = await getSettingsRow();
+  const db = await getDb();
+  const model = isAdmin(user) && body.model ? getModel(body.model).id : settings.modelName || settings.defaultModel;
   const [created] = await db
     .insert(schema.analyses)
     .values({
+      userId: user.id,
       sopId: body.sopId,
       title: body.title || `${sop.title} · ${body.videoFilename}`,
+      sourceType: body.sourceType === "images" ? "images" : "video",
       videoFilename: body.videoFilename,
       videoDurationSec: body.videoDurationSec ?? null,
-      frameIntervalSec: Number(body.frameIntervalSec ?? settings.frameIntervalSec),
+      frameIntervalSec: normalizeInterval(body.frameIntervalSec ?? settings.frameIntervalSec),
       maxFrames: Math.min(60, Math.max(1, Number(body.maxFrames ?? settings.maxFrames))),
-      modelUsed: getModel(body.model || settings.defaultModel).id,
+      modelUsed: model,
       status: "uploading",
     })
     .returning();
@@ -248,66 +534,115 @@ app.post("/analyses", async (c) => {
 });
 
 app.post("/analyses/:id/video", async (c) => {
-  const id = Number(c.req.param("id"));
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis) return c.json({ error: "任务不存在" }, 404);
   const form = await c.req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return c.json({ error: "请上传视频" }, 400);
   if (file.size > 5.5 * 1024 * 1024) {
-    return c.json({ skipped: true, reason: "视频超过 5.5MB，演示阶段仅保存抽帧证据" });
+    return c.json({ skipped: true, reason: "请改用分片上传" });
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const key = `videos/${id}/${file.name}`;
+  const key = `videos/${analysis.id}/${file.name}`;
   await putBlob(key, bytes, file.type || "video/mp4");
   const db = await getDb();
-  await db.update(schema.analyses).set({ videoBlobKey: key }).where(eq(schema.analyses.id, id));
+  await db.update(schema.analyses).set({ videoBlobKey: key }).where(eq(schema.analyses.id, analysis.id));
   return c.json({ ok: true, videoBlobKey: key });
 });
 
+app.post("/analyses/:id/video-chunk", async (c) => {
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis) return c.json({ error: "任务不存在" }, 404);
+  const form = await c.req.formData();
+  const file = form.get("file");
+  const index = Number(form.get("index"));
+  const total = Number(form.get("total"));
+  const mime = String(form.get("contentType") || "video/mp4");
+  if (!(file instanceof File) || Number.isNaN(index) || !total) {
+    return c.json({ error: "分片参数不完整" }, 400);
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  await putBlob(`videos/${analysis.id}/chunk-${String(index).padStart(4, "0")}`, bytes, "application/octet-stream");
+  if (index < total - 1) return c.json({ ok: true, assembled: false });
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (let i = 0; i < total; i++) {
+    const part = await getBlob(`videos/${analysis.id}/chunk-${String(i).padStart(4, "0")}`);
+    if (!part) return c.json({ error: `缺少分片 ${i}` }, 400);
+    parts.push(part.data);
+    size += part.data.byteLength;
+  }
+  const merged = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    merged.set(part, offset);
+    offset += part.byteLength;
+  }
+  const key = `videos/${analysis.id}/source`;
+  await putBlob(key, merged, mime);
+  const db = await getDb();
+  await db.update(schema.analyses).set({ videoBlobKey: key }).where(eq(schema.analyses.id, analysis.id));
+  return c.json({ ok: true, assembled: true, videoBlobKey: key });
+});
+
+app.get("/analyses/:id/media", async (c) => {
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis?.videoBlobKey) return c.json({ error: "没有可回放的视频" }, 404);
+  const blob = await getBlob(analysis.videoBlobKey);
+  if (!blob) return c.json({ error: "视频文件不存在" }, 404);
+  return new Response(blob.data, {
+    headers: {
+      "Content-Type": blob.contentType || "video/mp4",
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+});
+
 app.post("/analyses/:id/frames", async (c) => {
-  const id = Number(c.req.param("id"));
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis) return c.json({ error: "任务不存在" }, 404);
   const body = await c.req.json<{
     frames: Array<{ index: number; timestampSec: number; mimeType?: string; dataBase64: string }>;
   }>();
   if (!body.frames?.length) return c.json({ error: "没有帧数据" }, 400);
   const db = await getDb();
-  const [analysis] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, id)).limit(1);
-  if (!analysis) return c.json({ error: "任务不存在" }, 404);
-  const inserted: { id: number; frameIndex: number }[] = [];
+  let inserted = 0;
   for (const frame of body.frames) {
     const mime = frame.mimeType || "image/jpeg";
     const buf = Buffer.from(frame.dataBase64, "base64");
-    const key = `frames/${id}/${String(frame.index).padStart(4, "0")}.jpg`;
+    const key = `frames/${analysis.id}/${String(frame.index).padStart(4, "0")}.jpg`;
     await putBlob(key, buf, mime);
-    const [row] = await db
-      .insert(schema.analysisFrames)
-      .values({
-        analysisId: id,
-        frameIndex: frame.index,
-        timestampSec: frame.timestampSec,
-        blobKey: key,
-      })
-      .returning();
-    inserted.push({ id: row.id, frameIndex: row.frameIndex });
+    await db.insert(schema.analysisFrames).values({
+      analysisId: analysis.id,
+      frameIndex: frame.index,
+      timestampSec: frame.timestampSec,
+      blobKey: key,
+    });
+    inserted += 1;
   }
-  return c.json({ inserted: inserted.length });
+  return c.json({ inserted });
 });
 
 app.post("/analyses/:id/analyze", async (c) => {
-  const id = Number(c.req.param("id"));
-  const db = await getDb();
-  const [analysis] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, id)).limit(1);
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
   if (!analysis) return c.json({ error: "任务不存在" }, 404);
-  await db.update(schema.analyses).set({ status: "analyzing", errorMessage: null }).where(eq(schema.analyses.id, id));
-  enqueueAnalyze(id, analyzeVideoJob);
-  const [updated] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, id)).limit(1);
-  return c.json(updated);
+  const db = await getDb();
+  await db.update(schema.analyses).set({ status: "analyzing", errorMessage: null }).where(eq(schema.analyses.id, analysis.id));
+  enqueueAnalyze(analysis.id, analyzeVideoJob);
+  const [updated] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, analysis.id)).limit(1);
+  return c.json(sanitizeAnalysis(user, updated));
 });
 
 app.get("/analyses/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  const db = await getDb();
-  const [analysis] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, id)).limit(1);
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
   if (!analysis) return c.json({ error: "任务不存在" }, 404);
+  const db = await getDb();
   const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, analysis.sopId)).limit(1);
   const items = await db
     .select()
@@ -317,30 +652,26 @@ app.get("/analyses/:id", async (c) => {
   const frames = await db
     .select()
     .from(schema.analysisFrames)
-    .where(eq(schema.analysisFrames.analysisId, id))
+    .where(eq(schema.analysisFrames.analysisId, analysis.id))
     .orderBy(asc(schema.analysisFrames.frameIndex));
   const results = await db
     .select()
     .from(schema.analysisItemResults)
-    .where(eq(schema.analysisItemResults.analysisId, id));
+    .where(eq(schema.analysisItemResults.analysisId, analysis.id));
   const resultByItem = new Map(results.map((r) => [r.checkItemId, r]));
   const frameById = new Map(frames.map((f) => [f.id, f]));
+  const extras = await analysisExtras(analysis);
   return c.json({
-    ...analysis,
+    ...sanitizeAnalysis(user, analysis),
+    ...extras,
     sop,
-    frames: frames.map((f) => ({
-      ...f,
-      url: `/api/files?key=${encodeURIComponent(f.blobKey)}`,
-    })),
+    frames: frames.map((f) => ({ ...f, url: fileUrl(f.blobKey) })),
     items: items.map((item) => {
       const result = resultByItem.get(item.id);
       const evidence = (result?.evidenceFrameIds ?? [])
         .map((fid) => frameById.get(fid))
         .filter(Boolean)
-        .map((f) => ({
-          ...f,
-          url: `/api/files?key=${encodeURIComponent(f!.blobKey)}`,
-        }));
+        .map((f) => ({ ...f, url: fileUrl(f!.blobKey) }));
       return { ...item, result: result ?? null, evidence };
     }),
   });

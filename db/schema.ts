@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   jsonb,
   pgTable,
@@ -9,8 +10,27 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
+export const users = pgTable("users", {
+  id: serial().primaryKey(),
+  username: varchar({ length: 64 }).notNull().unique(),
+  displayName: varchar("display_name", { length: 128 }).notNull(),
+  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+  role: varchar({ length: 32 }).notNull().default("user"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const sessions = pgTable("sessions", {
+  token: varchar({ length: 128 }).primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
 export const sops = pgTable("sops", {
   id: serial().primaryKey(),
+  userId: integer("user_id").references(() => users.id),
   title: varchar({ length: 255 }).notNull(),
   originalFilename: varchar("original_filename", { length: 512 }).notNull(),
   contentType: varchar("content_type", { length: 128 }).notNull(),
@@ -39,10 +59,12 @@ export const sopCheckItems = pgTable("sop_check_items", {
 
 export const analyses = pgTable("analyses", {
   id: serial().primaryKey(),
+  userId: integer("user_id").references(() => users.id),
   sopId: integer("sop_id")
     .notNull()
     .references(() => sops.id),
   title: varchar({ length: 255 }).notNull(),
+  sourceType: varchar("source_type", { length: 32 }).notNull().default("video"),
   videoFilename: varchar("video_filename", { length: 512 }).notNull(),
   videoBlobKey: varchar("video_blob_key", { length: 600 }),
   videoDurationSec: real("video_duration_sec"),
@@ -87,11 +109,16 @@ export const appSettings = pgTable("app_settings", {
   defaultModel: varchar("default_model", { length: 128 })
     .notNull()
     .default("gemini-2.5-flash"),
-  frameIntervalSec: real("frame_interval_sec").notNull().default(2),
+  provider: varchar({ length: 32 }).notNull().default("gemini"),
+  modelName: varchar("model_name", { length: 128 }).notNull().default("gemini-2.5-flash"),
+  apiKey: text("api_key"),
+  baseUrl: varchar("base_url", { length: 512 }),
+  frameIntervalSec: real("frame_interval_sec").notNull().default(5),
   maxFrames: integer("max_frames").notNull().default(30),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export type User = typeof users.$inferSelect;
 export type Sop = typeof sops.$inferSelect;
 export type NewSop = typeof sops.$inferInsert;
 export type SopCheckItem = typeof sopCheckItems.$inferSelect;
