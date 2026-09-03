@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #0f2744;
+  --color-ink-2: #173a5e;
+  --color-teal: #0f766e;
+  --color-teal-2: #0d9488;
+  --color-paper: #f4f1ea;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #eef2f6;
+  color: #0f172a;
+}
+
+.rail {
+  background-image: linear-gradient(#cbd5e1, #cbd5e1);
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  background-position: 15px 0;
+}
