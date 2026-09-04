@@ -1,4 +1,4 @@
-export async function fileToJpegBase64(file: File, maxW = 640): Promise<string> {
+export async function fileToJpegBase64(file: File, maxW = 512): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -14,7 +14,7 @@ export async function fileToJpegBase64(file: File, maxW = 640): Promise<string> 
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("当前浏览器不支持画布");
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL("image/jpeg", 0.72);
+    const data = canvas.toDataURL("image/jpeg", 0.62);
     return data.replace(/^data:[^;]+;base64,/, "");
   } finally {
     URL.revokeObjectURL(url);

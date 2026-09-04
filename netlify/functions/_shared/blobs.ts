@@ -13,9 +13,9 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
   return copy;
 }
 
-async function tryNetlifyStore() {
+async function tryNetlifyStore(consistency: "strong" | "eventual" = "eventual") {
   const { getStore } = await import("@netlify/blobs");
-  return getStore({ name: STORE, consistency: "strong" });
+  return getStore({ name: STORE, consistency });
 }
 
 export async function putBlob(
@@ -30,7 +30,7 @@ export async function putBlob(
         ? new Uint8Array(data)
         : data;
   try {
-    const store = await tryNetlifyStore();
+    const store = await tryNetlifyStore("strong");
     const payload = typeof bytes === "string" ? bytes : toArrayBuffer(bytes);
     await store.set(key, payload, { metadata: { contentType } });
     return;
@@ -49,7 +49,7 @@ export async function putBlob(
 
 export async function deleteBlob(key: string): Promise<void> {
   try {
-    const store = await tryNetlifyStore();
+    const store = await tryNetlifyStore("strong");
     await store.delete(key);
     return;
   } catch {

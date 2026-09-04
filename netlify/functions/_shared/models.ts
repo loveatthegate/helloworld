@@ -2,7 +2,7 @@ export const VLM_MODELS = [
   {
     id: "gpt-5.6-terra",
     label: "GPT-5.6 Terra",
-    hint: "文档解析与画面核验，推荐默认",
+    hint: "手册解析更稳，看图分析较慢",
   },
   {
     id: "gpt-5.6-sol",
@@ -27,11 +27,13 @@ export const VLM_MODELS = [
   {
     id: "gemini-3.1-flash-image",
     label: "Gemini 3.1 Flash Image",
-    hint: "看图分析",
+    hint: "履职看图分析，速度优先",
   },
 ] as const;
 
 export type VlmModelId = (typeof VLM_MODELS)[number]["id"];
+
+export const FAST_ANALYZE_MODEL = "gemini-3.1-flash-image";
 
 export function getModel(id?: string | null) {
   return VLM_MODELS.find((m) => m.id === id) ?? VLM_MODELS[0];

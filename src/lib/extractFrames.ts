@@ -64,7 +64,7 @@ export async function extractFrames(
       times.push(last);
     }
 
-    const maxW = 640;
+    const maxW = 512;
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("当前浏览器不支持画布抽帧");
@@ -78,7 +78,7 @@ export async function extractFrames(
       canvas.width = Math.max(1, Math.round((video.videoWidth || maxW) * scale));
       canvas.height = Math.max(1, Math.round((video.videoHeight || 360) * scale));
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.62));
       if (!blob) continue;
       frames.push({
         index: i,

@@ -62,7 +62,7 @@ export function AnalysisListPage() {
             <Link to={`/analyses/${row.id}`} className="block">
               <div className="relative h-40 bg-slate-100">
                 {row.coverUrl ? (
-                  <img src={row.coverUrl} alt="" className="h-full w-full object-cover" />
+                  <img src={row.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-slate-400">暂无封面</div>
                 )}

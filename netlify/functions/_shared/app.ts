@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { getCookie } from "hono/cookie";
-import { and, asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../../../db/index";
 import { deleteBlob, getBlob, putBlob } from "./blobs";
 import { parseSopJob } from "./parse-sop";
 import { analyzeVideoJob } from "./analyze-video";
 import { enqueueAnalyze, enqueueParse } from "./jobs";
-import { VLM_MODELS, getModel } from "./models";
+import { FAST_ANALYZE_MODEL, VLM_MODELS, getModel } from "./models";
 import { getVlmStatus, testVlmConnection } from "./vlm";
 import {
   attachSession,
@@ -91,17 +91,11 @@ async function requireOwnedAnalysis(user: AuthUser, id: number) {
   return row;
 }
 
-async function analysisExtras(row: typeof schema.analyses.$inferSelect) {
-  const db = await getDb();
-  const frames = await db
-    .select()
-    .from(schema.analysisFrames)
-    .where(eq(schema.analysisFrames.analysisId, row.id))
-    .orderBy(asc(schema.analysisFrames.frameIndex));
-  const results = await db
-    .select()
-    .from(schema.analysisItemResults)
-    .where(eq(schema.analysisItemResults.analysisId, row.id));
+function extrasFrom(
+  row: typeof schema.analyses.$inferSelect,
+  frames: Array<typeof schema.analysisFrames.$inferSelect>,
+  results: Array<typeof schema.analysisItemResults.$inferSelect>,
+) {
   const failCount = results.filter((r) => r.verdict === "fail").length;
   const passCount = results.filter((r) => r.verdict === "pass").length;
   const fail = results.find((r) => r.verdict === "fail");
@@ -116,6 +110,37 @@ async function analysisExtras(row: typeof schema.analyses.$inferSelect) {
     coverUrl: cover ? fileUrl(cover.blobKey) : null,
     videoUrl: row.videoBlobKey ? `/api/analyses/${row.id}/media` : null,
   };
+}
+
+async function analysisExtras(row: typeof schema.analyses.$inferSelect) {
+  const db = await getDb();
+  const frames = await db
+    .select()
+    .from(schema.analysisFrames)
+    .where(eq(schema.analysisFrames.analysisId, row.id))
+    .orderBy(asc(schema.analysisFrames.frameIndex));
+  const results = await db
+    .select()
+    .from(schema.analysisItemResults)
+    .where(eq(schema.analysisItemResults.analysisId, row.id));
+  return extrasFrom(row, frames, results);
+}
+
+async function analysisExtrasMany(rows: Array<typeof schema.analyses.$inferSelect>) {
+  if (!rows.length) return [];
+  const db = await getDb();
+  const ids = rows.map((row) => row.id);
+  const [frames, results] = await Promise.all([
+    db.select().from(schema.analysisFrames).where(inArray(schema.analysisFrames.analysisId, ids)),
+    db.select().from(schema.analysisItemResults).where(inArray(schema.analysisItemResults.analysisId, ids)),
+  ]);
+  return rows.map((row) =>
+    extrasFrom(
+      row,
+      frames.filter((frame) => frame.analysisId === row.id).sort((a, b) => a.frameIndex - b.frameIndex),
+      results.filter((result) => result.analysisId === row.id),
+    ),
+  );
 }
 
 function isStalled(row: typeof schema.analyses.$inferSelect) {
@@ -173,7 +198,16 @@ app.post("/login", async (c) => {
   }
   const token = await createSession(user.id);
   attachSession(c, token);
-  return c.json({ user: publicUser(toAuthUser(user)) });
+  const settings = await getSettingsRow();
+  return c.json({
+    user: publicUser(toAuthUser(user)),
+    defaults: {
+      frameIntervalSec: normalizeInterval(settings.frameIntervalSec),
+      maxFrames: settings.maxFrames,
+      intervals: ALLOWED_INTERVALS,
+    },
+    branding: publicBranding(settings),
+  });
 });
 
 app.post("/logout", async (c) => {
@@ -577,33 +611,36 @@ app.get("/files", async (c) => {
 app.get("/dashboard", async (c) => {
   const user = c.get("user");
   const db = await getDb();
-  const sopFilter = isAdmin(user) ? undefined : eq(schema.sops.userId, user.id);
-  const analysisFilter = isAdmin(user) ? undefined : eq(schema.analyses.userId, user.id);
-  const sopQuery = db.select({ total: count() }).from(schema.sops);
-  const readyQuery = db.select({ total: count() }).from(schema.sops).where(eq(schema.sops.status, "ready"));
-  const analysisQuery = db.select({ total: count() }).from(schema.analyses);
-  const completedQuery = db.select({ total: count() }).from(schema.analyses).where(eq(schema.analyses.status, "completed"));
-  const [sopCount] = sopFilter ? await sopQuery.where(sopFilter) : await sopQuery;
-  const [readyCount] = isAdmin(user)
-    ? await readyQuery
-    : await db.select({ total: count() }).from(schema.sops).where(and(eq(schema.sops.status, "ready"), eq(schema.sops.userId, user.id)));
-  const [analysisCount] = analysisFilter ? await analysisQuery.where(analysisFilter) : await analysisQuery;
-  const [completedCount] = isAdmin(user)
-    ? await completedQuery
-    : await db
-        .select({ total: count() })
-        .from(schema.analyses)
-        .where(and(eq(schema.analyses.status, "completed"), eq(schema.analyses.userId, user.id)));
-  const recent = isAdmin(user)
-    ? await db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt)).limit(6)
-    : await db.select().from(schema.analyses).where(eq(schema.analyses.userId, user.id)).orderBy(desc(schema.analyses.createdAt)).limit(6);
+  const sopOwned = isAdmin(user) ? undefined : eq(schema.sops.userId, user.id);
+  const analysisOwned = isAdmin(user) ? undefined : eq(schema.analyses.userId, user.id);
+  const readyWhere = sopOwned ? and(eq(schema.sops.status, "ready"), sopOwned) : eq(schema.sops.status, "ready");
+  const completedWhere = analysisOwned
+    ? and(eq(schema.analyses.status, "completed"), analysisOwned)
+    : eq(schema.analyses.status, "completed");
+  const sopCountQuery = sopOwned
+    ? db.select({ total: count() }).from(schema.sops).where(sopOwned)
+    : db.select({ total: count() }).from(schema.sops);
+  const analysisCountQuery = analysisOwned
+    ? db.select({ total: count() }).from(schema.analyses).where(analysisOwned)
+    : db.select({ total: count() }).from(schema.analyses);
+  const recentQuery = analysisOwned
+    ? db.select().from(schema.analyses).where(analysisOwned).orderBy(desc(schema.analyses.createdAt)).limit(6)
+    : db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt)).limit(6);
+  const [[sopCount], [readyCount], [analysisCount], [completedCount], recent, vlm] = await Promise.all([
+    sopCountQuery,
+    db.select({ total: count() }).from(schema.sops).where(readyWhere),
+    analysisCountQuery,
+    db.select({ total: count() }).from(schema.analyses).where(completedWhere),
+    recentQuery,
+    getVlmStatus(),
+  ]);
   return c.json({
     sops: Number(sopCount.total),
     sopsReady: Number(readyCount.total),
     analyses: Number(analysisCount.total),
     analysesCompleted: Number(completedCount.total),
     recent: recent.map((row) => sanitizeAnalysis(user, row)),
-    vlm: isAdmin(user) ? await getVlmStatus() : { ready: (await getVlmStatus()).ready },
+    vlm: isAdmin(user) ? vlm : { ready: vlm.ready },
   });
 });
 
@@ -617,7 +654,7 @@ app.get("/analyses", async (c) => {
   const sopMap = new Map(sops.map((s) => [s.id, s]));
   const owners = await db.select().from(schema.users);
   const ownerMap = new Map(owners.map((u) => [u.id, u.displayName]));
-  const extras = await Promise.all(rows.map((row) => analysisExtras(row)));
+  const extras = await analysisExtrasMany(rows);
   return c.json(
     rows.map((row, index) => ({
       ...sanitizeAnalysis(user, row),
@@ -648,7 +685,7 @@ app.post("/analyses", async (c) => {
   if (sop.status !== "ready") return c.json({ error: "请先等待手册解析完成" }, 400);
   const settings = await getSettingsRow();
   const db = await getDb();
-  const model = getModel(isAdmin(user) && body.model ? body.model : settings.modelName || settings.defaultModel).id;
+  const model = getModel(isAdmin(user) && body.model ? body.model : FAST_ANALYZE_MODEL).id;
   const [created] = await db
     .insert(schema.analyses)
     .values({
@@ -744,21 +781,22 @@ app.post("/analyses/:id/frames", async (c) => {
   }>();
   if (!body.frames?.length) return c.json({ error: "没有帧数据" }, 400);
   const db = await getDb();
-  let inserted = 0;
-  for (const frame of body.frames) {
-    const mime = frame.mimeType || "image/jpeg";
-    const buf = Buffer.from(frame.dataBase64, "base64");
-    const key = `frames/${analysis.id}/${String(frame.index).padStart(4, "0")}.jpg`;
-    await putBlob(key, buf, mime);
-    await db.insert(schema.analysisFrames).values({
-      analysisId: analysis.id,
-      frameIndex: frame.index,
-      timestampSec: frame.timestampSec,
-      blobKey: key,
-    });
-    inserted += 1;
-  }
-  return c.json({ inserted });
+  const saved = await Promise.all(
+    body.frames.map(async (frame) => {
+      const mime = frame.mimeType || "image/jpeg";
+      const buf = Buffer.from(frame.dataBase64, "base64");
+      const key = `frames/${analysis.id}/${String(frame.index).padStart(4, "0")}.jpg`;
+      await putBlob(key, buf, mime);
+      return {
+        analysisId: analysis.id,
+        frameIndex: frame.index,
+        timestampSec: frame.timestampSec,
+        blobKey: key,
+      };
+    }),
+  );
+  if (saved.length) await db.insert(schema.analysisFrames).values(saved);
+  return c.json({ inserted: saved.length });
 });
 
 app.post("/analyses/:id/analyze", async (c) => {
@@ -766,11 +804,17 @@ app.post("/analyses/:id/analyze", async (c) => {
   const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
   if (!analysis) return c.json({ error: "任务不存在" }, 404);
   const db = await getDb();
+  if (analysis.status === "completed" || analysis.status === "failed") {
+    await db.delete(schema.analysisItemResults).where(eq(schema.analysisItemResults.analysisId, analysis.id));
+  }
   await db
     .update(schema.analyses)
     .set({
       status: "analyzing",
       errorMessage: null,
+      overallResult: null,
+      overallSummary: null,
+      completedAt: null,
       progressMessage: "已提交后台分析，正在排队…",
       progressUpdatedAt: new Date(),
     })

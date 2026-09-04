@@ -132,7 +132,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const login = (username: string, password: string) =>
-  api<{ user: AuthUser }>("/api/login", {
+  api<{
+    user: AuthUser;
+    defaults?: { frameIntervalSec: number; maxFrames: number; intervals: number[] };
+    branding?: Branding;
+  }>("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),

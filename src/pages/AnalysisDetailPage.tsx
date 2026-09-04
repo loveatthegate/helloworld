@@ -122,7 +122,7 @@ export function AnalysisDetailPage() {
                 {data.stalled
                   ? "后台已超过 90 秒没有心跳，任务可能已中断，不是抽帧失败。"
                   : waitedSec > 0
-                    ? `距上次进度更新 ${waitedSec} 秒。视觉模型看图通常需要 1–2 分钟，属正常等待。`
+                    ? `距上次进度更新 ${waitedSec} 秒。快速分析通常几十秒出第一步结论。`
                     : "已提交模型，等待返回。"}
               </p>
             </div>
@@ -165,7 +165,7 @@ export function AnalysisDetailPage() {
       {data.videoUrl && data.sourceType !== "images" && (
         <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
           <h2 className="mb-3 font-medium">视频回放</h2>
-          <video src={data.videoUrl} controls className="max-h-[420px] w-full rounded-lg bg-black" />
+          <video src={data.videoUrl} controls preload="none" className="max-h-[420px] w-full rounded-lg bg-black" />
         </section>
       )}
 
@@ -196,7 +196,7 @@ export function AnalysisDetailPage() {
           {data.frames.map((frame) => (
             <figure key={frame.id} className="w-36 shrink-0">
               <button type="button" onClick={() => setPreview(frame.url)}>
-                <img src={frame.url} alt="" className="h-24 w-36 rounded-lg object-cover ring-1 ring-slate-200" />
+                <img src={frame.url} alt="" loading="lazy" className="h-24 w-36 rounded-lg object-cover ring-1 ring-slate-200" />
               </button>
               <figcaption className="mt-1 text-center text-xs text-slate-500">
                 {data.sourceType === "images" ? `照片 ${frame.frameIndex + 1}` : formatTime(frame.timestampSec)}

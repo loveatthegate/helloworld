@@ -20,7 +20,7 @@ export function AnalysisNewPage() {
   const [images, setImages] = useState<File[]>([]);
   const [intervalSec, setIntervalSec] = useState(defaults.frameIntervalSec || 5);
   const [maxFrames, setMaxFrames] = useState(defaults.maxFrames || 30);
-  const [model, setModel] = useState("gpt-5.6-terra");
+  const [model, setModel] = useState("gemini-3.1-flash-image");
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,7 +36,7 @@ export function AnalysisNewPage() {
       getSettings()
         .then((s) => {
           setSettings(s);
-          setModel(s.modelName || s.defaultModel);
+          setModel(s.availableModels.some((m) => m.id === "gemini-3.1-flash-image") ? "gemini-3.1-flash-image" : s.modelName || s.defaultModel);
           setIntervalSec(s.frameIntervalSec);
           setMaxFrames(s.maxFrames);
         })
@@ -106,24 +106,22 @@ export function AnalysisNewPage() {
         }),
       });
 
-      if (sourceType === "video" && file && file.size <= 40 * 1024 * 1024) {
-        await uploadVideoChunks(created.id, file, setProgress);
-      }
+      const videoUpload =
+        sourceType === "video" && file && file.size <= 12 * 1024 * 1024
+          ? uploadVideoChunks(created.id, file, setProgress).catch(() => undefined)
+          : Promise.resolve();
 
-      const batchSize = 4;
-      for (let i = 0; i < frames.length; i += batchSize) {
-        const batch = frames.slice(i, i + batchSize);
-        setProgress(`上传画面 ${Math.min(i + batch.length, frames.length)}/${frames.length}`);
-        await api(`/api/analyses/${created.id}/frames`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ frames: batch }),
-        });
-      }
+      setProgress(`上传画面 ${frames.length} 张…`);
+      await api(`/api/analyses/${created.id}/frames`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frames }),
+      });
 
       setProgress("启动分析…");
       await api(`/api/analyses/${created.id}/analyze`, { method: "POST" });
       navigate(`/analyses/${created.id}`);
+      void videoUpload;
     } catch (e) {
       setError(e instanceof Error ? e.message : "分析失败");
     } finally {
@@ -158,7 +156,7 @@ export function AnalysisNewPage() {
         <FileDrop
           accept="video/mp4,video/webm,video/quicktime"
           label="拖入或选择作业视频"
-          hint="推荐 MP4 / WebM，可回放"
+          hint="推荐 MP4 / WebM。大于 12MB 只保留抽帧，不上传原片，分析更快"
           file={file}
           onFile={(next) => setFile(next)}
         />

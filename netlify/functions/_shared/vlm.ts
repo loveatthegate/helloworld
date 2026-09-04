@@ -46,6 +46,7 @@ export async function generateVlmText(
   modelId: string | undefined,
   content: ChatContent,
   signal?: AbortSignal,
+  maxTokens = 4096,
 ): Promise<string> {
   if (!isVlmConfigured()) {
     throw new Error("视觉模型尚未配置。请由管理员在运行环境中设置密钥后重试。");
@@ -65,7 +66,7 @@ export async function generateVlmText(
       {
         model,
         temperature: 0.1,
-        max_tokens: 4096,
+        max_tokens: maxTokens,
         messages: [{ role: "user", content: parts }],
       },
       options,

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { getMe, login as loginApi, logout as logoutApi, type AuthUser } from "./api";
+import { getBranding, getMe, login as loginApi, logout as logoutApi, type AuthUser, type Branding } from "./api";
+import { useBranding } from "./branding";
 
 type AuthState = {
   user: AuthUser | null;
@@ -16,17 +17,28 @@ const AuthContext = createContext<AuthState | null>(null);
 const fallbackDefaults = { frameIntervalSec: 5, maxFrames: 30, intervals: [3, 5, 10] };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { apply, refresh: refreshBranding } = useBranding();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [defaults, setDefaults] = useState(fallbackDefaults);
 
+  const applySession = (payload: {
+    user: AuthUser;
+    defaults?: { frameIntervalSec: number; maxFrames: number; intervals: number[] };
+    branding?: Branding;
+  }) => {
+    setUser(payload.user);
+    if (payload.defaults) setDefaults(payload.defaults);
+    if (payload.branding) apply(payload.branding);
+  };
+
   const refresh = async () => {
     try {
       const me = await getMe();
-      setUser(me.user);
-      setDefaults(me.defaults);
+      applySession(me);
     } catch {
       setUser(null);
+      await refreshBranding();
     } finally {
       setLoading(false);
     }
@@ -38,13 +50,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string) => {
     const result = await loginApi(username, password);
-    setUser(result.user);
-    await refresh();
+    applySession(result);
+    setLoading(false);
   };
 
   const logout = async () => {
     await logoutApi().catch(() => undefined);
     setUser(null);
+    try {
+      apply(await getBranding());
+    } catch {
+      // keep last branding
+    }
   };
 
   return (

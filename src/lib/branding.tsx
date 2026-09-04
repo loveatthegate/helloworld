@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { getBranding, type Branding } from "./api";
 
 const fallback: Branding = {
@@ -18,30 +18,38 @@ function applyTheme(color: string) {
   root.style.setProperty("--brand", color);
 }
 
-const BrandingContext = createContext<{ branding: Branding; refresh: () => Promise<void> }>({
+function commitBranding(next: Branding) {
+  applyTheme(next.themeColor || fallback.themeColor);
+  document.title = next.systemName || fallback.systemName;
+  return next;
+}
+
+const BrandingContext = createContext<{
+  branding: Branding;
+  apply: (next: Branding) => void;
+  refresh: () => Promise<void>;
+}>({
   branding: fallback,
+  apply: () => undefined,
   refresh: async () => undefined,
 });
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState<Branding>(fallback);
 
+  const apply = (next: Branding) => {
+    setBranding(commitBranding(next));
+  };
+
   const refresh = async () => {
     try {
-      const next = await getBranding();
-      setBranding(next);
-      applyTheme(next.themeColor || fallback.themeColor);
-      document.title = next.systemName || fallback.systemName;
+      apply(await getBranding());
     } catch {
       applyTheme(fallback.themeColor);
     }
   };
 
-  useEffect(() => {
-    void refresh();
-  }, []);
-
-  return <BrandingContext.Provider value={{ branding, refresh }}>{children}</BrandingContext.Provider>;
+  return <BrandingContext.Provider value={{ branding, apply, refresh }}>{children}</BrandingContext.Provider>;
 }
 
 export function useBranding() {
