@@ -1,4 +1,4 @@
-import { getEnv, isNetlifyRuntime } from "../../../db/env";
+import { getEnv } from "../../../db/env";
 
 function siteOrigin(): string {
   return getEnv("URL") || getEnv("DEPLOY_PRIME_URL") || "http://localhost:8888";
@@ -17,7 +17,7 @@ async function invokeBackground(name: string, body: unknown) {
 }
 
 export async function enqueueParse(sopId: number, parseFn: (id: number) => Promise<void>) {
-  if (isNetlifyRuntime()) {
+  if (!getEnv("LVZHI_VITE_API") && (getEnv("URL") || getEnv("DEPLOY_PRIME_URL") || process.env.NETLIFY)) {
     await invokeBackground("parse-sop-background", { sopId });
     return;
   }
@@ -27,7 +27,7 @@ export async function enqueueParse(sopId: number, parseFn: (id: number) => Promi
 }
 
 export async function enqueueAnalyze(analysisId: number, analyzeFn: (id: number) => Promise<void>) {
-  if (isNetlifyRuntime()) {
+  if (!getEnv("LVZHI_VITE_API") && (getEnv("URL") || getEnv("DEPLOY_PRIME_URL") || process.env.NETLIFY)) {
     await invokeBackground("analyze-video-background", { analysisId });
     return;
   }

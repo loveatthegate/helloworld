@@ -815,6 +815,8 @@ app.post("/analyses/:id/analyze", async (c) => {
       overallResult: null,
       overallSummary: null,
       completedAt: null,
+      progressStep: 0,
+      progressTotal: null,
       progressMessage: "已提交后台分析，正在排队…",
       progressUpdatedAt: new Date(),
     })
