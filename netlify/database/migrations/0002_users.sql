@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  display_name VARCHAR(128) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  role VARCHAR(32) NOT NULL DEFAULT 'user',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token VARCHAR(128) PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMP NOT NULL
+);
+
+ALTER TABLE sops ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+ALTER TABLE analyses ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+ALTER TABLE analyses ADD COLUMN IF NOT EXISTS source_type VARCHAR(32) NOT NULL DEFAULT 'video';
+
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NOT NULL DEFAULT 'gemini';
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS model_name VARCHAR(128) NOT NULL DEFAULT 'gemini-2.5-flash';
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS api_key TEXT;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS base_url VARCHAR(512);
+
+UPDATE app_settings SET frame_interval_sec = 5 WHERE frame_interval_sec IS NOT NULL AND frame_interval_sec NOT IN (3, 5, 10);

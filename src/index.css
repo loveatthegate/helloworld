@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #0f2744;
+  --color-ink-2: #173a5e;
+  --color-teal: #0f766e;
+  --color-teal-2: #0d9488;
+  --color-paper: #f4f1ea;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: #eef2f6;
+  color: #0f172a;
+}
+
+.rail {
+  background-image: linear-gradient(#cbd5e1, #cbd5e1);
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  background-position: 15px 0;
+}
+
+.book-card {
+  position: relative;
+  min-height: 220px;
+  border-radius: 4px 12px 12px 4px;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 10px, transparent 10px),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-teal) 88%, white), color-mix(in srgb, var(--color-ink) 70%, var(--color-teal)));
+  box-shadow:
+    8px 10px 24px rgba(15, 39, 68, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+.book-card::before {
+  content: "";
+  position: absolute;
+  inset: 12px 14px 12px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+  pointer-events: none;
+}
