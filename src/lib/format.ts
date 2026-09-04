@@ -18,6 +18,7 @@ export const verdictLabel: Record<string, string> = {
   fail: "不满足",
   uncertain: "存疑",
   not_observed: "未观察到",
+  skipped: "已跳过",
 };
 
 export const statusLabel: Record<string, string> = {

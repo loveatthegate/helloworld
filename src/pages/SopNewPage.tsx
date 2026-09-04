@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Breadcrumb } from "../components/Breadcrumb";
 import { FileDrop } from "../components/FileDrop";
 import { ModelSelect } from "../components/ModelSelect";
 import { api, getSettings, type Settings } from "../lib/api";
@@ -62,6 +63,7 @@ export function SopNewPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
+      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "SOP 手册", to: "/sops" }, { label: "上传手册" }]} />
       <div>
         <h1 className="text-2xl font-semibold text-ink">上传 SOP 手册</h1>
         <p className="mt-1 text-sm text-slate-500">支持 PDF、DOCX、PNG/JPG、TXT、Markdown。解析后会生成可交互检查项。</p>

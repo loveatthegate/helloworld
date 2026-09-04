@@ -16,6 +16,16 @@ export type VlmModel = {
   hint: string;
 };
 
+export type Branding = {
+  systemName: string;
+  tagline: string;
+  companyName: string;
+  copyright: string;
+  themeColor: string;
+  logoUrl: string | null;
+  loginImageUrl: string | null;
+};
+
 export type Settings = {
   defaultModel: string;
   modelName: string;
@@ -24,6 +34,7 @@ export type Settings = {
   availableModels: VlmModel[];
   intervals: number[];
   vlm: VlmStatus;
+  appearance: Branding;
 };
 
 export type Sop = {
@@ -77,6 +88,11 @@ export type Analysis = {
   passCount?: number;
   coverUrl?: string | null;
   videoUrl?: string | null;
+  progressStep?: number | null;
+  progressTotal?: number | null;
+  progressMessage?: string | null;
+  progressUpdatedAt?: string | null;
+  stalled?: boolean;
 };
 
 export type Frame = {
@@ -124,7 +140,25 @@ export const login = (username: string, password: string) =>
 
 export const logout = () => api<{ ok: boolean }>("/api/logout", { method: "POST" });
 export const getMe = () =>
-  api<{ user: AuthUser; defaults: { frameIntervalSec: number; maxFrames: number; intervals: number[] } }>("/api/me");
+  api<{
+    user: AuthUser;
+    defaults: { frameIntervalSec: number; maxFrames: number; intervals: number[] };
+    branding?: Branding;
+  }>("/api/me");
+
+export const getBranding = () => api<Branding>("/api/branding");
+export const saveAppearance = (body: Record<string, unknown>) =>
+  api<Branding>("/api/settings/appearance", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const resetAppearance = () => api<Branding>("/api/settings/appearance/reset", { method: "POST" });
+export const uploadAppearanceImage = (kind: "logo" | "login-image", file: File) => {
+  const form = new FormData();
+  form.set("file", file);
+  return api<Branding>(`/api/settings/appearance/${kind}`, { method: "POST", body: form });
+};
 
 export const getSettings = () => api<Settings>("/api/settings");
 export const saveSettings = (body: Record<string, unknown>) =>
@@ -173,6 +207,11 @@ export const reparseSop = (id: number, model?: string) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model }),
   });
+
+export const deleteSop = (id: number) => api<{ ok: boolean }>(`/api/sops/${id}`, { method: "DELETE" });
+export const deleteAnalysis = (id: number) => api<{ ok: boolean }>(`/api/analyses/${id}`, { method: "DELETE" });
+export const skipAnalysisItem = (analysisId: number, itemId: number) =>
+  api<{ ok: boolean }>(`/api/analyses/${analysisId}/items/${itemId}/skip`, { method: "POST" });
 
 export const listAnalyses = () => api<Analysis[]>("/api/analyses");
 export const getAnalysis = (id: number) =>

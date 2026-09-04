@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getSop, getSettings, reparseSop, type CheckItem, type Sop } from "../lib/api";
 import { formatDate } from "../lib/format";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { PageSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/Badges";
 import { ModelSelect } from "../components/ModelSelect";
 import { useAuth } from "../lib/auth";
@@ -86,10 +88,11 @@ export function SopDetailPage() {
   }, [data?.status, sopId]);
 
   if (error) return <p className="text-rose-600">{error}</p>;
-  if (!data) return <p className="text-slate-500">加载手册…</p>;
+  if (!data) return <PageSkeleton variant="detail" />;
 
   return (
     <div className="space-y-6">
+      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "SOP 手册", to: "/sops" }, { label: data.title }]} />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">

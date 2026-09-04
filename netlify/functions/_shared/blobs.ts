@@ -47,6 +47,24 @@ export async function putBlob(
   await writeFile(`${full}.meta.json`, JSON.stringify({ contentType }));
 }
 
+export async function deleteBlob(key: string): Promise<void> {
+  try {
+    const store = await tryNetlifyStore();
+    await store.delete(key);
+    return;
+  } catch {
+    // Local filesystem fallback.
+  }
+  try {
+    const { unlink } = await import("node:fs/promises");
+    const full = localPath(key);
+    await unlink(full).catch(() => undefined);
+    await unlink(`${full}.meta.json`).catch(() => undefined);
+  } catch {
+    // ignore
+  }
+}
+
 export async function getBlob(
   key: string,
 ): Promise<{ data: Uint8Array; contentType: string } | null> {

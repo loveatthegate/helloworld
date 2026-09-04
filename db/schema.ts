@@ -75,6 +75,10 @@ export const analyses = pgTable("analyses", {
   overallResult: varchar("overall_result", { length: 32 }),
   overallSummary: text("overall_summary"),
   errorMessage: text("error_message"),
+  progressStep: integer("progress_step"),
+  progressTotal: integer("progress_total"),
+  progressMessage: text("progress_message"),
+  progressUpdatedAt: timestamp("progress_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 });
@@ -115,6 +119,13 @@ export const appSettings = pgTable("app_settings", {
   baseUrl: varchar("base_url", { length: 512 }),
   frameIntervalSec: real("frame_interval_sec").notNull().default(5),
   maxFrames: integer("max_frames").notNull().default(30),
+  systemName: varchar("system_name", { length: 128 }).notNull().default("履职系统"),
+  tagline: varchar({ length: 255 }).notNull().default("SOP 视觉核验"),
+  companyName: varchar("company_name", { length: 128 }),
+  copyright: text().notNull().default("© 履职系统"),
+  themeColor: varchar("theme_color", { length: 32 }).notNull().default("#0f766e"),
+  logoBlobKey: varchar("logo_blob_key", { length: 600 }),
+  loginImageBlobKey: varchar("login_image_blob_key", { length: 600 }),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 

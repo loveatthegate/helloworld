@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getAnalysis, api } from "../lib/api";
+import { api, getAnalysis, skipAnalysisItem } from "../lib/api";
 import { formatDate, formatTime, verdictLabel } from "../lib/format";
 import { ResultText, StatusBadge, VerdictBadge } from "../components/Badges";
 import { Lightbox } from "../components/Lightbox";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
 export function AnalysisDetailPage() {
@@ -13,6 +15,7 @@ export function AnalysisDetailPage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof getAnalysis>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [skipping, setSkipping] = useState<number | null>(null);
 
   const refresh = () =>
     getAnalysis(analysisId)
@@ -31,7 +34,7 @@ export function AnalysisDetailPage() {
   }, [data?.status, analysisId]);
 
   const counts = useMemo(() => {
-    const init = { pass: 0, fail: 0, uncertain: 0, not_observed: 0 };
+    const init = { pass: 0, fail: 0, uncertain: 0, not_observed: 0, skipped: 0 };
     for (const item of data?.items ?? []) {
       const v = item.result?.verdict as keyof typeof init | undefined;
       if (v && v in init) init[v] += 1;
@@ -40,14 +43,25 @@ export function AnalysisDetailPage() {
   }, [data]);
 
   if (error) return <p className="text-rose-600">{error}</p>;
-  if (!data) return <p className="text-slate-500">加载报告…</p>;
+  if (!data) return <PageSkeleton variant="detail" />;
 
   const total = data.items.length || 1;
+  const finished = data.items.filter((item) => item.result).length;
   const passRate = Math.round((counts.pass / total) * 100);
+  const analyzing = data.status === "analyzing" || data.status === "uploading";
+  const currentTitle = data.items.find((item) => !item.result)?.title;
+  const percent = Math.round((finished / total) * 100);
 
   return (
     <div className="space-y-6">
       {preview && <Lightbox src={preview} onClose={() => setPreview(null)} />}
+      <Breadcrumb
+        items={[
+          { label: "工作台", to: "/" },
+          { label: "履职分析", to: "/analyses" },
+          { label: data.title },
+        ]}
+      />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -86,6 +100,45 @@ export function AnalysisDetailPage() {
           )}
         </div>
       </div>
+
+      {analyzing && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-amber-950">
+                {data.status === "uploading" ? "画面已上传，正在启动分析" : "正在逐项分析"}
+              </div>
+              <p className="mt-1 text-sm text-amber-900">
+                {data.progressMessage ||
+                  (data.frames.length
+                    ? `抽帧已完成（${data.frames.length} 张），模型正在对照 SOP 步骤。`
+                    : "正在准备画面…")}
+              </p>
+              {currentTitle && <p className="mt-1 text-xs text-amber-800">当前步骤：{currentTitle}</p>}
+            </div>
+            <div className="text-sm text-amber-900">
+              {finished}/{total} 步
+            </div>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-200">
+            <div className="h-full bg-teal transition-all" style={{ width: `${percent}%` }} />
+          </div>
+          {data.stalled && (
+            <p className="mt-3 text-sm text-amber-950">
+              当前步骤超过 90 秒没有新进展，多半是模型较慢或后台任务中断，不是抽帧失败。可以跳过这一步，或点击重新分析。
+            </p>
+          )}
+          {data.stalled && (
+            <button
+              type="button"
+              className="mt-2 text-sm text-teal"
+              onClick={() => void api(`/api/analyses/${data.id}/analyze`, { method: "POST" }).then(() => refresh())}
+            >
+              继续分析剩余步骤
+            </button>
+          )}
+        </section>
+      )}
 
       {data.videoUrl && data.sourceType !== "images" && (
         <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
@@ -132,29 +185,49 @@ export function AnalysisDetailPage() {
 
       <section className="space-y-4">
         <h2 className="font-medium">逐项结论</h2>
-        {data.items.map((item) => (
-          <article key={item.id} className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-xs text-teal">
-                  步骤 {item.stepOrder} {item.category ? `· ${item.category}` : ""}
+        {data.items.map((item) => {
+          const pending = !item.result && analyzing;
+          return (
+            <article key={item.id} className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs text-teal">
+                    步骤 {item.stepOrder} {item.category ? `· ${item.category}` : ""}
+                  </div>
+                  <h3 className="mt-1 font-medium text-ink">{item.title}</h3>
                 </div>
-                <h3 className="mt-1 font-medium text-ink">{item.title}</h3>
+                <VerdictBadge verdict={item.result?.verdict} />
               </div>
-              <VerdictBadge verdict={item.result?.verdict} />
-            </div>
-            <p className="mt-2 text-sm text-slate-600">{item.result?.reasoning || item.description}</p>
-            {item.evidence.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {item.evidence.map((frame) => (
-                  <button type="button" key={frame.id} onClick={() => setPreview(frame.url)}>
-                    <img src={frame.url} alt="证据" className="h-20 w-28 rounded-md object-cover ring-1 ring-slate-200" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </article>
-        ))}
+              <p className="mt-2 text-sm text-slate-600">
+                {item.result?.reasoning || (pending ? "等待模型返回该步骤结论…" : item.description)}
+              </p>
+              {pending && (
+                <button
+                  type="button"
+                  disabled={skipping === item.id}
+                  className="mt-3 text-sm text-teal"
+                  onClick={() => {
+                    setSkipping(item.id);
+                    void skipAnalysisItem(data.id, item.id)
+                      .then(() => refresh())
+                      .finally(() => setSkipping(null));
+                  }}
+                >
+                  {skipping === item.id ? "跳过中…" : "跳过此步骤"}
+                </button>
+              )}
+              {item.evidence.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.evidence.map((frame) => (
+                    <button type="button" key={frame.id} onClick={() => setPreview(frame.url)}>
+                      <img src={frame.url} alt="证据" className="h-20 w-28 rounded-md object-cover ring-1 ring-slate-200" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </article>
+          );
+        })}
       </section>
     </div>
   );

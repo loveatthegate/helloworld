@@ -62,3 +62,16 @@ export function parseSopJson(text: string): ParsedSop {
 export function parseAnalysisJson(text: string): AnalysisLlmResult {
   return analysisResultSchema.parse(extractJsonObject(text));
 }
+
+export const singleStepSchema = z.object({
+  verdict: z.enum(["pass", "fail", "uncertain", "not_observed"]),
+  confidence: z.number().min(0).max(1).optional().default(0.5),
+  reasoning: z.string().optional().default(""),
+  evidenceFrameIndex: z.number().int().min(0).optional(),
+  evidenceFrameIndexes: z.array(z.number().int().min(0)).optional(),
+  observedAtSec: z.number().optional(),
+});
+
+export function parseSingleStepJson(text: string) {
+  return singleStepSchema.parse(extractJsonObject(text));
+}

@@ -17,6 +17,26 @@ export async function getSettingsRow() {
   return created;
 }
 
+export const DEFAULT_BRANDING = {
+  systemName: "履职系统",
+  tagline: "SOP 视觉核验",
+  companyName: "",
+  copyright: "© 履职系统",
+  themeColor: "#0f766e",
+};
+
+export function publicBranding(row: Awaited<ReturnType<typeof getSettingsRow>>) {
+  return {
+    systemName: row.systemName || DEFAULT_BRANDING.systemName,
+    tagline: row.tagline || DEFAULT_BRANDING.tagline,
+    companyName: row.companyName || "",
+    copyright: row.copyright || DEFAULT_BRANDING.copyright,
+    themeColor: row.themeColor || DEFAULT_BRANDING.themeColor,
+    logoUrl: row.logoBlobKey ? "/api/branding/logo" : null,
+    loginImageUrl: row.loginImageBlobKey ? "/api/branding/login-image" : null,
+  };
+}
+
 export const ALLOWED_INTERVALS = [3, 5, 10] as const;
 
 export function normalizeInterval(value?: number | null) {

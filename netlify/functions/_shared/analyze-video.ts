@@ -1,43 +1,62 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { getDb, schema } from "../../../db/index";
 import { getBlob } from "./blobs";
-import { parseAnalysisJson } from "./json";
+import { parseSingleStepJson } from "./json";
 import { generateVlmText, getVlmStatus } from "./vlm";
 
-const ANALYZE_PROMPT = `你是现场履职审查员。下面给出 SOP 检查项，以及作业现场画面（视频抽帧或上传的现场照片，每张图附带序号/时间戳）。
-
-请逐项判断这些画面是否满足该检查项。
-若输入是多张现场照片：每一张照片都必须对照全部检查项分别判断，并在 reasoning 中写明「照片N：合格/不合格 + 依据」。
-该项总判定：任一张明显不合格则为 fail；全部明确合格为 pass。
-
-判定取值：
-- pass：画面能明确看到符合要求的动作/状态
-- fail：画面显示明显不符合或缺失关键动作
-- uncertain：有相关画面但无法确认
-- not_observed：抽帧中完全看不到该步骤
-
-只依据可见画面，不要臆测未出现的内容。必须返回 JSON：
+const STEP_PROMPT = `你是现场履职审查员。下面只给出【一个】SOP 检查项，以及作业现场画面（视频抽帧或现场照片）。
+只判断这一项。必须返回 JSON，不要 Markdown：
 {
-  "overallSummary": "总体结论，中文",
-  "results": [
-    {
-      "stepOrder": 1,
-      "verdict": "pass",
-      "confidence": 0.0,
-      "reasoning": "结合哪些帧/照片、看到了什么",
-      "evidenceFrameIndex": 0,
-      "evidenceFrameIndexes": [0],
-      "observedAtSec": 0
-    }
-  ]
+  "verdict": "pass",
+  "confidence": 0.0,
+  "reasoning": "结合哪些帧/照片、看到了什么",
+  "evidenceFrameIndex": 0,
+  "evidenceFrameIndexes": [0],
+  "observedAtSec": 0
 }
-
-evidenceFrameIndex / evidenceFrameIndexes 使用帧列表中的序号（从 0 开始）。不合格时优先把不合规画面放在索引列表最前。每条检查项都要有结果。`;
+verdict 只能是 pass / fail / uncertain / not_observed。
+只依据可见画面，不要臆测。evidenceFrameIndex 使用画面序号（从 0 开始）。`;
 
 function overallFromVerdicts(verdicts: string[]): "pass" | "fail" | "partial" {
-  if (verdicts.some((v) => v === "fail")) return "fail";
-  if (verdicts.length > 0 && verdicts.every((v) => v === "pass")) return "pass";
+  const meaningful = verdicts.filter((v) => v !== "skipped");
+  if (meaningful.some((v) => v === "fail")) return "fail";
+  if (meaningful.length > 0 && meaningful.every((v) => v === "pass")) return "pass";
   return "partial";
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}超过 ${Math.round(ms / 1000)} 秒未返回`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function setProgress(
+  analysisId: number,
+  step: number,
+  total: number,
+  message: string,
+) {
+  const db = await getDb();
+  await db
+    .update(schema.analyses)
+    .set({
+      status: "analyzing",
+      progressStep: step,
+      progressTotal: total,
+      progressMessage: message,
+      progressUpdatedAt: new Date(),
+    })
+    .where(eq(schema.analyses.id, analysisId));
 }
 
 export async function analyzeVideoJob(analysisId: number): Promise<void> {
@@ -48,11 +67,6 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
     .where(eq(schema.analyses.id, analysisId))
     .limit(1);
   if (!analysis) throw new Error(`分析任务 ${analysisId} 不存在`);
-
-  await db
-    .update(schema.analyses)
-    .set({ status: "analyzing", errorMessage: null })
-    .where(eq(schema.analyses.id, analysisId));
 
   try {
     const items = await db
@@ -69,34 +83,13 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
       .orderBy(asc(schema.analysisFrames.frameIndex));
     if (!frames.length) throw new Error("没有可用的画面");
 
-    const checklist = items
-      .map((item) => {
-        const actions = Array.isArray(item.keyActions) ? item.keyActions.join("；") : "";
-        return `步骤${item.stepOrder} [${item.category || "操作"}] ${item.title}
-说明：${item.description || ""}
-关键动作：${actions}
-通过标准：${item.passCriteria || ""}
-风险：${item.riskHint || ""}`;
-      })
-      .join("\n\n");
+    await setProgress(analysisId, 0, items.length, `已准备 ${frames.length} 张画面，开始逐项分析`);
 
-    const frameLimit = analysis.sourceType === "images" ? frames.length : analysis.maxFrames;
-    const images: { mimeType: string; base64: string }[] = [];
-    const frameNotes: string[] = [];
-    for (const frame of frames.slice(0, frameLimit)) {
-      const blob = await getBlob(frame.blobKey);
-      if (!blob) continue;
-      images.push({
-        mimeType: blob.contentType || "image/jpeg",
-        base64: Buffer.from(blob.data).toString("base64"),
-      });
-      frameNotes.push(
-        analysis.sourceType === "images"
-          ? `照片${frame.frameIndex + 1}（序号 ${frame.frameIndex}）`
-          : `帧${frame.frameIndex} t=${frame.timestampSec.toFixed(1)}s`,
-      );
-    }
-    if (!images.length) throw new Error("抽帧文件读取失败");
+    const existing = await db
+      .select()
+      .from(schema.analysisItemResults)
+      .where(eq(schema.analysisItemResults.analysisId, analysisId));
+    const existingByItem = new Map(existing.map((row) => [row.checkItemId, row]));
 
     const vlm = await getVlmStatus();
     if (!vlm.ready) {
@@ -117,60 +110,132 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
         .set({
           status: "completed",
           overallResult: "partial",
-          overallSummary: "抽帧已保存，但当前没有可用的视觉模型，检查项均标记为未观察到。配置密钥后可重新发起分析。",
+          overallSummary: "抽帧已保存，但当前没有可用的视觉模型。",
           errorMessage: null,
+          progressMessage: "未配置模型",
+          progressUpdatedAt: new Date(),
           completedAt: new Date(),
         })
         .where(eq(schema.analyses.id, analysisId));
       return;
     }
 
-    const sourceNote =
-      analysis.sourceType === "images"
-        ? `输入为 ${images.length} 张现场照片，每张都必须对照全部检查项。`
-        : `抽帧间隔 ${analysis.frameIntervalSec} 秒，共 ${images.length} 帧。`;
-    const raw = await generateVlmText(analysis.modelUsed, {
-      text: `${ANALYZE_PROMPT}\n\n检查项：\n${checklist}\n\n画面列表：\n${frameNotes.join("\n")}\n${sourceNote}`,
-      images,
-    });
-    const parsed = parseAnalysisJson(raw);
+    const frameLimit = analysis.sourceType === "images" ? frames.length : Math.min(frames.length, analysis.maxFrames, 8);
+    const images: { mimeType: string; base64: string }[] = [];
+    const frameNotes: string[] = [];
+    for (const frame of frames.slice(0, frameLimit)) {
+      const blob = await getBlob(frame.blobKey);
+      if (!blob) continue;
+      images.push({
+        mimeType: blob.contentType || "image/jpeg",
+        base64: Buffer.from(blob.data).toString("base64"),
+      });
+      frameNotes.push(
+        analysis.sourceType === "images"
+          ? `照片${frame.frameIndex + 1}（序号 ${frame.frameIndex}）`
+          : `帧${frame.frameIndex} t=${frame.timestampSec.toFixed(1)}s`,
+      );
+    }
+    if (!images.length) throw new Error("抽帧文件读取失败");
 
-    await db.delete(schema.analysisItemResults).where(eq(schema.analysisItemResults.analysisId, analysisId));
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const latest = await db
+        .select()
+        .from(schema.analysisItemResults)
+        .where(
+          and(eq(schema.analysisItemResults.analysisId, analysisId), eq(schema.analysisItemResults.checkItemId, item.id)),
+        )
+        .limit(1);
+      if (latest[0]) {
+        existingByItem.set(item.id, latest[0]);
+        await setProgress(analysisId, i + 1, items.length, `步骤 ${item.stepOrder} 已有结果，跳过`);
+        continue;
+      }
 
-    const results = items.map((item) => {
-      const found = parsed.results.find((r) => r.stepOrder === item.stepOrder);
-      const indexes = [
-        ...(found?.evidenceFrameIndexes ?? []),
-        ...(found?.evidenceFrameIndex != null ? [found.evidenceFrameIndex] : []),
-      ];
-      const unique = [...new Set(indexes)];
-      const evidenceFrames = unique
-        .map((idx) => frames.find((f) => f.frameIndex === idx) ?? frames[idx])
-        .filter((frame): frame is (typeof frames)[number] => Boolean(frame));
-      const fallback = evidenceFrames[0];
-      return {
-        analysisId,
-        checkItemId: item.id,
-        verdict: found?.verdict ?? "not_observed",
-        confidence: found?.confidence ?? 0.4,
-        reasoning: found?.reasoning || "模型未给出该项说明",
-        evidenceFrameIds: evidenceFrames.map((frame) => frame.id),
-        observedAtSec: found?.observedAtSec ?? fallback?.timestampSec ?? null,
-      };
-    });
+      await setProgress(analysisId, i + 1, items.length, `正在分析 ${i + 1}/${items.length}：${item.title}`);
+      const actions = Array.isArray(item.keyActions) ? item.keyActions.join("；") : "";
+      const checklist = `步骤${item.stepOrder} [${item.category || "操作"}] ${item.title}
+说明：${item.description || ""}
+关键动作：${actions}
+通过标准：${item.passCriteria || ""}
+风险：${item.riskHint || ""}`;
 
-    if (results.length) {
-      await db.insert(schema.analysisItemResults).values(results);
+      try {
+        const raw = await withTimeout(
+          generateVlmText(analysis.modelUsed, {
+            text: `${STEP_PROMPT}\n\n检查项：\n${checklist}\n\n画面列表：\n${frameNotes.join("\n")}`,
+            images,
+          }),
+          90_000,
+          `步骤「${item.title}」`,
+        );
+        const found = parseSingleStepJson(raw);
+        const indexes = [
+          ...(found.evidenceFrameIndexes ?? []),
+          ...(found.evidenceFrameIndex != null ? [found.evidenceFrameIndex] : []),
+        ];
+        const unique = [...new Set(indexes)];
+        const evidenceFrames = unique
+          .map((idx) => frames.find((f) => f.frameIndex === idx) ?? frames[idx])
+          .filter((frame): frame is (typeof frames)[number] => Boolean(frame));
+        const again = await db
+          .select()
+          .from(schema.analysisItemResults)
+          .where(
+            and(eq(schema.analysisItemResults.analysisId, analysisId), eq(schema.analysisItemResults.checkItemId, item.id)),
+          )
+          .limit(1);
+        if (again[0]) continue;
+        await db.insert(schema.analysisItemResults).values({
+          analysisId,
+          checkItemId: item.id,
+          verdict: found.verdict,
+          confidence: found.confidence ?? 0.4,
+          reasoning: found.reasoning || "模型未给出该项说明",
+          evidenceFrameIds: evidenceFrames.map((frame) => frame.id),
+          observedAtSec: found.observedAtSec ?? evidenceFrames[0]?.timestampSec ?? null,
+        });
+      } catch (error) {
+        const again = await db
+          .select()
+          .from(schema.analysisItemResults)
+          .where(
+            and(eq(schema.analysisItemResults.analysisId, analysisId), eq(schema.analysisItemResults.checkItemId, item.id)),
+          )
+          .limit(1);
+        if (again[0]) continue;
+        const message = error instanceof Error ? error.message : String(error);
+        await db.insert(schema.analysisItemResults).values({
+          analysisId,
+          checkItemId: item.id,
+          verdict: "uncertain",
+          confidence: 0,
+          reasoning: `该步骤分析未完成：${message}。可重新分析此步骤，或继续查看其他步骤。`,
+          evidenceFrameIds: [],
+          observedAtSec: null,
+        });
+        await setProgress(analysisId, i + 1, items.length, `步骤「${item.title}」未完成：${message}`);
+      }
     }
 
+    const results = await db
+      .select()
+      .from(schema.analysisItemResults)
+      .where(eq(schema.analysisItemResults.analysisId, analysisId));
     const overall = overallFromVerdicts(results.map((r) => r.verdict));
+    const done = results.filter((r) => r.verdict !== "skipped").length;
     await db
       .update(schema.analyses)
       .set({
         status: "completed",
         overallResult: overall,
-        overallSummary: parsed.overallSummary || "已完成逐项比对",
+        overallSummary: `已完成 ${done}/${items.length} 个步骤的比对。`,
         errorMessage: null,
+        progressStep: items.length,
+        progressTotal: items.length,
+        progressMessage: "分析完成",
+        progressUpdatedAt: new Date(),
         completedAt: new Date(),
       })
       .where(eq(schema.analyses.id, analysisId));
@@ -178,7 +243,13 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     await db
       .update(schema.analyses)
-      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
+      .set({
+        status: "failed",
+        errorMessage: message,
+        progressMessage: message,
+        progressUpdatedAt: new Date(),
+        completedAt: new Date(),
+      })
       .where(eq(schema.analyses.id, analysisId));
     throw error;
   }

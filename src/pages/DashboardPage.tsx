@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, ClipboardCheck, Plus } from "lucide-react";
+import { BookOpen, ClipboardCheck, FileCheck, Plus, ShieldCheck } from "lucide-react";
 import { getDashboard, type Analysis, type VlmStatus } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { ResultText, StatusBadge } from "../components/Badges";
+import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
 function VlmBanner({ vlm }: { vlm: VlmStatus }) {
@@ -31,26 +32,31 @@ export function DashboardPage() {
   }, []);
 
   if (error) return <p className="text-rose-600">{error}</p>;
-  if (!data) return <p className="text-slate-500">加载工作台…</p>;
+  if (!data) return <PageSkeleton variant="dashboard" />;
 
   const cards = [
-    { label: "SOP 手册", value: data.sops, extra: `${data.sopsReady} 份已解析` },
-    { label: "分析任务", value: data.analyses, extra: `${data.analysesCompleted} 份已出报告` },
+    { label: "SOP 手册", value: data.sops, extra: `${data.sopsReady} 份已解析`, icon: BookOpen, to: "/sops" },
+    { label: "分析任务", value: data.analyses, extra: `${data.analysesCompleted} 份已出报告`, icon: ClipboardCheck, to: "/analyses" },
   ];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-ink">工作台</h1>
-          <p className="mt-1 text-sm text-slate-500">上传手册与作业视频，用视觉模型核验是否按 SOP 履职。</p>
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal/10 text-teal">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-ink">工作台</h1>
+            <p className="mt-1 text-sm text-slate-500">上传手册与作业视频，用视觉模型核验是否按 SOP 履职。</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <Link to="/sops/new" className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
             <Plus size={16} /> 上传 SOP
           </Link>
           <Link to="/analyses/new" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">
-            履职分析
+            <FileCheck size={16} /> 履职分析
           </Link>
         </div>
       </div>
@@ -59,17 +65,22 @@ export function DashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => (
-          <div key={card.label} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-            <div className="text-sm text-slate-500">{card.label}</div>
+          <Link key={card.label} to={card.to} className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 hover:ring-teal-2">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-500">{card.label}</div>
+              <card.icon className="text-teal" size={20} />
+            </div>
             <div className="mt-2 text-3xl font-semibold text-ink">{card.value}</div>
             <div className="mt-1 text-sm text-slate-500">{card.extra}</div>
-          </div>
+          </Link>
         ))}
       </div>
 
       <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-medium">最近报告</h2>
+          <h2 className="inline-flex items-center gap-2 font-medium">
+            <ClipboardCheck size={18} className="text-teal" /> 最近报告
+          </h2>
           <Link to="/analyses" className="text-sm text-teal">
             查看全部
           </Link>
@@ -78,7 +89,7 @@ export function DashboardPage() {
           <div className="flex flex-col items-center gap-2 py-10 text-slate-500">
             <ClipboardCheck />
             <p>还没有分析任务。先上传一份 SOP，再提交作业视频。</p>
-            <Link to="/sops" className="text-teal text-sm inline-flex items-center gap-1">
+            <Link to="/sops" className="text-teal inline-flex items-center gap-1 text-sm">
               <BookOpen size={14} /> 前往手册库
             </Link>
           </div>

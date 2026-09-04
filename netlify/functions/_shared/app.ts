@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { getCookie } from "hono/cookie";
 import { and, asc, count, desc, eq } from "drizzle-orm";
 import { getDb, schema } from "../../../db/index";
-import { getBlob, putBlob } from "./blobs";
+import { deleteBlob, getBlob, putBlob } from "./blobs";
 import { parseSopJob } from "./parse-sop";
 import { analyzeVideoJob } from "./analyze-video";
 import { enqueueAnalyze, enqueueParse } from "./jobs";
@@ -24,7 +24,7 @@ import {
   type AuthUser,
 } from "./auth";
 import { hashPassword, verifyPassword } from "./password";
-import { ALLOWED_INTERVALS, getSettingsRow, normalizeInterval } from "./settings";
+import { ALLOWED_INTERVALS, DEFAULT_BRANDING, getSettingsRow, normalizeInterval, publicBranding } from "./settings";
 
 type Env = { Variables: { user: AuthUser } };
 const app = new Hono<Env>().basePath("/api");
@@ -47,8 +47,14 @@ function isPublicApiPath(path: string) {
   return (
     normalized === "/login" ||
     normalized === "/health" ||
+    normalized === "/branding" ||
+    normalized === "/branding/logo" ||
+    normalized === "/branding/login-image" ||
     normalized === "/api/login" ||
-    normalized === "/api/health"
+    normalized === "/api/health" ||
+    normalized === "/api/branding" ||
+    normalized === "/api/branding/logo" ||
+    normalized === "/api/branding/login-image"
   );
 }
 
@@ -112,16 +118,48 @@ async function analysisExtras(row: typeof schema.analyses.$inferSelect) {
   };
 }
 
+function isStalled(row: typeof schema.analyses.$inferSelect) {
+  if (row.status !== "analyzing") return false;
+  const raw = row.progressUpdatedAt || row.createdAt;
+  const ms = raw instanceof Date ? raw.getTime() : raw ? new Date(raw).getTime() : 0;
+  return !ms || Date.now() - ms > 90_000;
+}
+
 function sanitizeAnalysis(user: AuthUser, row: typeof schema.analyses.$inferSelect) {
   return {
     ...row,
     modelUsed: isAdmin(user) ? row.modelUsed : undefined,
+    stalled: isStalled(row),
   };
+}
+
+async function serveBrandingFile(key: string | null | undefined) {
+  if (!key) return null;
+  return getBlob(key);
 }
 
 app.get("/health", async (c) => {
   const vlm = await getVlmStatus();
   return c.json({ ok: true, vlm: { ready: vlm.ready } });
+});
+
+app.get("/branding", async (c) => {
+  const settings = await getSettingsRow();
+  return c.json(publicBranding(settings));
+});
+
+app.get("/branding/logo", async (c) => {
+  const settings = await getSettingsRow();
+  const blob = await serveBrandingFile(settings.logoBlobKey);
+  if (!blob) return c.json({ error: "未设置 Logo" }, 404);
+  return new Response(blob.data, { headers: { "Content-Type": blob.contentType, "Cache-Control": "public, max-age=3600" } });
+});
+
+app.get("/branding/login-image", async (c) => {
+  const settings = await getSettingsRow();
+  const blob = await serveBrandingFile(settings.loginImageBlobKey);
+  if (!blob) return c.json({ error: "未设置登录页图片" }, 404);
+  return new Response(blob.data, { headers: { "Content-Type": blob.contentType, "Cache-Control": "public, max-age=3600" } });
 });
 
 app.post("/login", async (c) => {
@@ -154,6 +192,7 @@ app.get("/me", async (c) => {
       maxFrames: settings.maxFrames,
       intervals: ALLOWED_INTERVALS,
     },
+    branding: publicBranding(settings),
   });
 });
 
@@ -262,6 +301,7 @@ function publicSettings(settings: Awaited<ReturnType<typeof getSettingsRow>>, vl
     availableModels: VLM_MODELS,
     intervals: ALLOWED_INTERVALS,
     vlm,
+    appearance: publicBranding(settings),
   };
 }
 
@@ -308,6 +348,83 @@ app.post("/settings/test", async (c) => {
   } catch (error) {
     return c.json({ ok: false, error: error instanceof Error ? error.message : "连接失败" }, 400);
   }
+});
+
+app.put("/settings/appearance", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可修改外观" }, 403);
+  const body = await c.req.json<{
+    systemName?: string;
+    tagline?: string;
+    companyName?: string;
+    copyright?: string;
+    themeColor?: string;
+  }>();
+  const db = await getDb();
+  const current = await getSettingsRow();
+  const [updated] = await db
+    .update(schema.appSettings)
+    .set({
+      systemName: body.systemName?.trim() || current.systemName,
+      tagline: body.tagline?.trim() || current.tagline,
+      companyName: body.companyName === undefined ? current.companyName : body.companyName.trim() || null,
+      copyright: body.copyright?.trim() || current.copyright,
+      themeColor: /^#([0-9a-fA-F]{6})$/.test(body.themeColor || "") ? body.themeColor : current.themeColor,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.appSettings.id, current.id))
+    .returning();
+  return c.json(publicBranding(updated));
+});
+
+app.post("/settings/appearance/reset", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可重置外观" }, 403);
+  const db = await getDb();
+  const current = await getSettingsRow();
+  if (current.logoBlobKey) await deleteBlob(current.logoBlobKey);
+  if (current.loginImageBlobKey) await deleteBlob(current.loginImageBlobKey);
+  const [updated] = await db
+    .update(schema.appSettings)
+    .set({
+      systemName: DEFAULT_BRANDING.systemName,
+      tagline: DEFAULT_BRANDING.tagline,
+      companyName: null,
+      copyright: DEFAULT_BRANDING.copyright,
+      themeColor: DEFAULT_BRANDING.themeColor,
+      logoBlobKey: null,
+      loginImageBlobKey: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.appSettings.id, current.id))
+    .returning();
+  return c.json(publicBranding(updated));
+});
+
+app.post("/settings/appearance/:kind", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可修改外观" }, 403);
+  const kind = c.req.param("kind");
+  if (kind !== "logo" && kind !== "login-image") return c.json({ error: "不支持的资源" }, 400);
+  const form = await c.req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File)) return c.json({ error: "请上传图片" }, 400);
+  if (file.size > 4 * 1024 * 1024) return c.json({ error: "图片请小于 4MB" }, 413);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const key = `branding/${kind}`;
+  await putBlob(key, bytes, file.type || "image/png");
+  const db = await getDb();
+  const current = await getSettingsRow();
+  const [updated] = await db
+    .update(schema.appSettings)
+    .set({
+      logoBlobKey: kind === "logo" ? key : current.logoBlobKey,
+      loginImageBlobKey: kind === "login-image" ? key : current.loginImageBlobKey,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.appSettings.id, current.id))
+    .returning();
+  return c.json(publicBranding(updated));
 });
 
 app.get("/sops", async (c) => {
@@ -362,7 +479,15 @@ app.post("/sops", async (c) => {
       modelUsed: model,
     })
     .returning();
-  enqueueParse(created.id, parseSopJob);
+  try {
+    await enqueueParse(created.id, parseSopJob);
+  } catch (error) {
+    const db2 = await getDb();
+    await db2
+      .update(schema.sops)
+      .set({ status: "failed", parseError: error instanceof Error ? error.message : "解析任务未能启动", updatedAt: new Date() })
+      .where(eq(schema.sops.id, created.id));
+  }
   return c.json(created, 201);
 });
 
@@ -391,9 +516,34 @@ app.post("/sops/:id/parse", async (c) => {
     .update(schema.sops)
     .set({ modelUsed: model, status: "parsing", updatedAt: new Date() })
     .where(eq(schema.sops.id, sop.id));
-  enqueueParse(sop.id, parseSopJob);
+  try {
+    await enqueueParse(sop.id, parseSopJob);
+  } catch (error) {
+    await db
+      .update(schema.sops)
+      .set({ status: "failed", parseError: error instanceof Error ? error.message : "解析任务未能启动", updatedAt: new Date() })
+      .where(eq(schema.sops.id, sop.id));
+  }
   const [updated] = await db.select().from(schema.sops).where(eq(schema.sops.id, sop.id)).limit(1);
   return c.json(updated);
+});
+
+app.delete("/sops/:id", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可删除手册" }, 403);
+  const sop = await requireOwnedSop(user, Number(c.req.param("id")));
+  if (!sop) return c.json({ error: "手册不存在" }, 404);
+  const db = await getDb();
+  const related = await db.select().from(schema.analyses).where(eq(schema.analyses.sopId, sop.id));
+  for (const row of related) {
+    const frames = await db.select().from(schema.analysisFrames).where(eq(schema.analysisFrames.analysisId, row.id));
+    for (const frame of frames) await deleteBlob(frame.blobKey);
+    if (row.videoBlobKey) await deleteBlob(row.videoBlobKey);
+    await db.delete(schema.analyses).where(eq(schema.analyses.id, row.id));
+  }
+  await deleteBlob(sop.blobKey);
+  await db.delete(schema.sops).where(eq(schema.sops.id, sop.id));
+  return c.json({ ok: true });
 });
 
 app.get("/files", async (c) => {
@@ -616,10 +766,91 @@ app.post("/analyses/:id/analyze", async (c) => {
   const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
   if (!analysis) return c.json({ error: "任务不存在" }, 404);
   const db = await getDb();
-  await db.update(schema.analyses).set({ status: "analyzing", errorMessage: null }).where(eq(schema.analyses.id, analysis.id));
-  enqueueAnalyze(analysis.id, analyzeVideoJob);
+  await db
+    .update(schema.analyses)
+    .set({
+      status: "analyzing",
+      errorMessage: null,
+      progressMessage: "已提交后台分析，正在排队…",
+      progressUpdatedAt: new Date(),
+    })
+    .where(eq(schema.analyses.id, analysis.id));
+  try {
+    await enqueueAnalyze(analysis.id, analyzeVideoJob);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "后台分析未能启动";
+    await db
+      .update(schema.analyses)
+      .set({ status: "failed", errorMessage: message, progressMessage: message, progressUpdatedAt: new Date() })
+      .where(eq(schema.analyses.id, analysis.id));
+    return c.json({ error: message }, 500);
+  }
   const [updated] = await db.select().from(schema.analyses).where(eq(schema.analyses.id, analysis.id)).limit(1);
   return c.json(sanitizeAnalysis(user, updated));
+});
+
+app.post("/analyses/:id/items/:itemId/skip", async (c) => {
+  const user = c.get("user");
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis) return c.json({ error: "任务不存在" }, 404);
+  const itemId = Number(c.req.param("itemId"));
+  const db = await getDb();
+  const [item] = await db.select().from(schema.sopCheckItems).where(eq(schema.sopCheckItems.id, itemId)).limit(1);
+  if (!item || item.sopId !== analysis.sopId) return c.json({ error: "检查项不存在" }, 404);
+  const [existing] = await db
+    .select()
+    .from(schema.analysisItemResults)
+    .where(and(eq(schema.analysisItemResults.analysisId, analysis.id), eq(schema.analysisItemResults.checkItemId, itemId)))
+    .limit(1);
+  if (!existing) {
+    await db.insert(schema.analysisItemResults).values({
+      analysisId: analysis.id,
+      checkItemId: itemId,
+      verdict: "skipped",
+      confidence: 0,
+      reasoning: "用户跳过该步骤",
+      evidenceFrameIds: [],
+      observedAtSec: null,
+    });
+  }
+  const items = await db.select().from(schema.sopCheckItems).where(eq(schema.sopCheckItems.sopId, analysis.sopId));
+  const results = await db.select().from(schema.analysisItemResults).where(eq(schema.analysisItemResults.analysisId, analysis.id));
+  if (results.length >= items.length) {
+    const fails = results.filter((r) => r.verdict === "fail").length;
+    await db
+      .update(schema.analyses)
+      .set({
+        status: "completed",
+        overallResult: fails ? "fail" : "partial",
+        overallSummary: "部分步骤已跳过，其余步骤已出结论。",
+        progressMessage: "已跳过剩余步骤",
+        progressUpdatedAt: new Date(),
+        completedAt: new Date(),
+      })
+      .where(eq(schema.analyses.id, analysis.id));
+  } else {
+    await db
+      .update(schema.analyses)
+      .set({
+        progressMessage: `已跳过「${item.title}」`,
+        progressUpdatedAt: new Date(),
+      })
+      .where(eq(schema.analyses.id, analysis.id));
+  }
+  return c.json({ ok: true });
+});
+
+app.delete("/analyses/:id", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可删除分析" }, 403);
+  const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
+  if (!analysis) return c.json({ error: "任务不存在" }, 404);
+  const db = await getDb();
+  const frames = await db.select().from(schema.analysisFrames).where(eq(schema.analysisFrames.analysisId, analysis.id));
+  for (const frame of frames) await deleteBlob(frame.blobKey);
+  if (analysis.videoBlobKey) await deleteBlob(analysis.videoBlobKey);
+  await db.delete(schema.analyses).where(eq(schema.analyses.id, analysis.id));
+  return c.json({ ok: true });
 });
 
 app.get("/analyses/:id", async (c) => {

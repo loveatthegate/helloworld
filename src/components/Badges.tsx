@@ -15,6 +15,7 @@ const verdictClass: Record<string, string> = {
   fail: "bg-rose-600 text-white",
   uncertain: "bg-amber-500 text-white",
   not_observed: "bg-slate-500 text-white",
+  skipped: "bg-slate-300 text-slate-700",
 };
 
 const resultClass: Record<string, string> = {

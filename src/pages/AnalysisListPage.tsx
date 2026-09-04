@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { LayoutGrid, List } from "lucide-react";
-import { listAnalyses, type Analysis } from "../lib/api";
+import { deleteAnalysis, listAnalyses, type Analysis } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { ResultText, StatusBadge } from "../components/Badges";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
 export function AnalysisListPage() {
@@ -11,13 +14,18 @@ export function AnalysisListPage() {
   const [rows, setRows] = useState<Analysis[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"list" | "card">("card");
+  const [pending, setPending] = useState<Analysis | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = () => listAnalyses().then(setRows).catch((e: Error) => setError(e.message));
 
   useEffect(() => {
-    listAnalyses().then(setRows).catch((e: Error) => setError(e.message));
+    void refresh();
   }, []);
 
   return (
     <div className="space-y-5">
+      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "履职分析" }]} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink">履职分析</h1>
@@ -46,10 +54,12 @@ export function AnalysisListPage() {
         </div>
       </div>
       {error && <p className="text-rose-600">{error}</p>}
+      {!rows && !error && <PageSkeleton variant="cards" />}
       {mode === "card" ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {rows?.map((row) => (
-            <Link key={row.id} to={`/analyses/${row.id}`} className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 hover:ring-teal-2">
+            <div key={row.id} className="relative overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 hover:ring-teal-2">
+            <Link to={`/analyses/${row.id}`} className="block">
               <div className="relative h-40 bg-slate-100">
                 {row.coverUrl ? (
                   <img src={row.coverUrl} alt="" className="h-full w-full object-cover" />
@@ -78,6 +88,16 @@ export function AnalysisListPage() {
                 </div>
               </div>
             </Link>
+            {isAdmin && (
+              <button
+                type="button"
+                className="absolute bottom-3 right-3 text-xs text-rose-600"
+                onClick={() => setPending(row)}
+              >
+                删除
+              </button>
+            )}
+            </div>
           ))}
           {rows && rows.length === 0 && <p className="text-slate-500">暂无报告</p>}
         </div>
@@ -93,6 +113,7 @@ export function AnalysisListPage() {
                 <th className="px-4 py-3 font-medium">合格</th>
                 <th className="px-4 py-3 font-medium">不合格</th>
                 <th className="px-4 py-3 font-medium">时间</th>
+                {isAdmin && <th className="px-4 py-3 font-medium">操作</th>}
               </tr>
             </thead>
             <tbody>
@@ -111,11 +132,18 @@ export function AnalysisListPage() {
                   <td className="px-4 py-3 text-emerald-700">{row.passCount ?? 0}</td>
                   <td className="px-4 py-3 text-rose-700">{row.failCount ?? 0}</td>
                   <td className="px-4 py-3 text-slate-500">{formatDate(row.createdAt)}</td>
+                  {isAdmin && (
+                    <td className="px-4 py-3">
+                      <button type="button" className="text-rose-600" onClick={() => setPending(row)}>
+                        删除
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {rows && rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={isAdmin ? 8 : 7} className="px-4 py-10 text-center text-slate-500">
                     暂无报告
                   </td>
                 </tr>
@@ -124,6 +152,25 @@ export function AnalysisListPage() {
           </table>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(pending)}
+        title="删除分析"
+        message={`确认删除「${pending?.title}」？抽帧、视频和结论都会删除，此操作不可恢复。`}
+        confirmText="删除分析"
+        busy={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => {
+          if (!pending) return;
+          setBusy(true);
+          void deleteAnalysis(pending.id)
+            .then(() => {
+              setPending(null);
+              return refresh();
+            })
+            .catch((e: Error) => setError(e.message))
+            .finally(() => setBusy(false));
+        }}
+      />
     </div>
   );
 }

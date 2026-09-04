@@ -54,12 +54,20 @@ export async function generateVlmText(modelId: string | undefined, content: Chat
       image_url: { url: `data:${image.mimeType};base64,${image.base64}` },
     });
   }
-  const completion = await client().chat.completions.create({
-    model,
-    temperature: 0.1,
-    max_tokens: 4096,
-    messages: [{ role: "user", content: parts }],
-  });
+  let completion;
+  try {
+    completion = await client().chat.completions.create({
+      model,
+      temperature: 0.1,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: parts }],
+    });
+  } catch {
+    completion = await client().chat.completions.create({
+      model,
+      messages: [{ role: "user", content: parts }],
+    });
+  }
   const text = completion.choices[0]?.message?.content;
   if (!text) throw new Error("模型未返回文本");
   return text;

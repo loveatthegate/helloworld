@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { createUser, listUsers, patchUser } from "../lib/api";
 import { formatDate } from "../lib/format";
+import { Modal } from "../components/Modal";
+import { PageSkeleton } from "../components/Skeleton";
 
 export function UsersPage() {
   const [rows, setRows] = useState<Array<{
@@ -11,6 +13,7 @@ export function UsersPage() {
     isActive: boolean;
     createdAt: string;
   }> | null>(null);
+  const [open, setOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -31,6 +34,7 @@ export function UsersPage() {
       setUsername("");
       setDisplayName("");
       setPassword("");
+      setOpen(false);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建失败");
@@ -41,40 +45,17 @@ export function UsersPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
-        <p className="mt-1 text-sm text-slate-500">系统仅有一名超级管理员。普通用户只能看到自己上传的手册与分析。</p>
-      </div>
-      <div className="grid gap-3 rounded-2xl bg-white p-5 ring-1 ring-slate-200 md:grid-cols-4">
-        <input
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="用户名"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
-        />
-        <input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="显示名"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="初始密码"
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
-        />
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void create()}
-          className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2"
-        >
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
+          <p className="mt-1 text-sm text-slate-500">系统仅有一名超级管理员。普通用户只能看到自己上传的手册与分析。</p>
+        </div>
+        <button type="button" onClick={() => setOpen(true)} className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
           新建普通用户
         </button>
       </div>
       {error && <p className="text-sm text-rose-600">{error}</p>}
+      {!rows && !error && <PageSkeleton variant="table" />}
       <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-slate-500">
@@ -112,6 +93,32 @@ export function UsersPage() {
           </tbody>
         </table>
       </div>
+      <Modal open={open} title="新建普通用户" onClose={() => setOpen(false)}>
+        <div className="space-y-3">
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="用户名"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
+          />
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="显示名"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="初始密码"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-2"
+          />
+          <button type="button" disabled={busy} onClick={() => void create()} className="w-full rounded-lg bg-teal py-2 text-sm text-white hover:bg-teal-2">
+            {busy ? "创建中…" : "创建"}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

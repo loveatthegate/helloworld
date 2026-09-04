@@ -4,13 +4,21 @@ function siteOrigin(): string {
   return getEnv("URL") || getEnv("DEPLOY_PRIME_URL") || "http://localhost:8888";
 }
 
-export function enqueueParse(sopId: number, parseFn: (id: number) => Promise<void>) {
+async function invokeBackground(name: string, body: unknown) {
+  const res = await fetch(`${siteOrigin()}/.netlify/functions/${name}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok && res.status !== 202) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`后台任务未能启动（${res.status}${text ? `: ${text.slice(0, 120)}` : ""}）`);
+  }
+}
+
+export async function enqueueParse(sopId: number, parseFn: (id: number) => Promise<void>) {
   if (isNetlifyRuntime()) {
-    void fetch(`${siteOrigin()}/.netlify/functions/parse-sop-background`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sopId }),
-    });
+    await invokeBackground("parse-sop-background", { sopId });
     return;
   }
   setTimeout(() => {
@@ -18,13 +26,9 @@ export function enqueueParse(sopId: number, parseFn: (id: number) => Promise<voi
   }, 0);
 }
 
-export function enqueueAnalyze(analysisId: number, analyzeFn: (id: number) => Promise<void>) {
+export async function enqueueAnalyze(analysisId: number, analyzeFn: (id: number) => Promise<void>) {
   if (isNetlifyRuntime()) {
-    void fetch(`${siteOrigin()}/.netlify/functions/analyze-video-background`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ analysisId }),
-    });
+    await invokeBackground("analyze-video-background", { analysisId });
     return;
   }
   setTimeout(() => {
