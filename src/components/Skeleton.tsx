@@ -101,8 +101,8 @@ export function PageSkeleton({
 
 export function AppShellSkeleton() {
   return (
-    <div className="min-h-screen lg:flex">
-      <aside className="hidden w-60 shrink-0 bg-ink lg:block">
+    <div className="min-h-screen">
+      <aside className="fixed inset-y-0 left-0 flex h-screen w-60 flex-col bg-ink">
         <div className="space-y-4 p-5">
           <Pulse className="h-10 w-36 bg-white/10" />
           <Pulse className="h-9 bg-white/10" />
@@ -110,7 +110,7 @@ export function AppShellSkeleton() {
           <Pulse className="h-9 bg-white/10" />
         </div>
       </aside>
-      <div className="min-w-0 flex-1 px-8 py-8">
+      <div className="min-w-0 pl-60 px-8 py-8">
         <PageSkeleton variant="dashboard" />
       </div>
     </div>
