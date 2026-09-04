@@ -1,9 +1,13 @@
-import { useState, type MouseEvent } from "react";
+import { useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useBranding } from "../lib/branding";
 import { Pulse } from "../components/Skeleton";
+
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "LvZhi#Admin1";
+const TRIPLE_CLICK_MS = 900;
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
@@ -12,10 +16,11 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  if (!loading && user) return <Navigate to="/" replace />;
+  const clickCount = useRef(0);
+  const clickTimer = useRef(0);
 
   const submit = async (name = username.trim(), pass = password) => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -27,11 +32,43 @@ export function LoginPage() {
     }
   };
 
-  const loginAsAdminOnTripleClick = (event: MouseEvent) => {
-    if (event.detail !== 3 || busy) return;
-    event.preventDefault();
-    void submit("admin", "LvZhi#Admin1");
+  const loginAsAdminOnTripleClick = () => {
+    window.clearTimeout(clickTimer.current);
+    clickCount.current += 1;
+    if (clickCount.current >= 3) {
+      clickCount.current = 0;
+      void submit(ADMIN_USERNAME, ADMIN_PASSWORD);
+      return;
+    }
+    clickTimer.current = window.setTimeout(() => {
+      clickCount.current = 0;
+    }, TRIPLE_CLICK_MS);
   };
+
+  if (!loading && user) return <Navigate to="/" replace />;
+
+  const mark = branding.logoUrl ? (
+    <img
+      src={branding.logoUrl}
+      alt=""
+      draggable={false}
+      className="h-10 w-10 cursor-pointer select-none rounded-lg object-cover"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        loginAsAdminOnTripleClick();
+      }}
+    />
+  ) : (
+    <div
+      className="flex h-10 w-10 cursor-pointer select-none items-center justify-center rounded-lg bg-teal/10 text-teal"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        loginAsAdminOnTripleClick();
+      }}
+    >
+      <ShieldCheck className="pointer-events-none" />
+    </div>
+  );
 
   return (
     <div
@@ -52,21 +89,7 @@ export function LoginPage() {
         ) : (
           <>
             <div className="mb-6 flex items-center gap-3">
-              {branding.logoUrl ? (
-                <img
-                  src={branding.logoUrl}
-                  alt=""
-                  className="h-10 w-10 cursor-default select-none rounded-lg object-cover"
-                  onClick={loginAsAdminOnTripleClick}
-                />
-              ) : (
-                <div
-                  className="flex h-10 w-10 cursor-default select-none items-center justify-center rounded-lg bg-teal/10 text-teal"
-                  onClick={loginAsAdminOnTripleClick}
-                >
-                  <ShieldCheck />
-                </div>
-              )}
+              {mark}
               <div>
                 <div className="text-lg font-semibold text-ink">{branding.systemName}</div>
                 <div className="text-xs text-slate-500">{branding.tagline || "请登录后使用手册核验与视频分析"}</div>
