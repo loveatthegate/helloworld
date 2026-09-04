@@ -59,8 +59,8 @@ export function SopDetailPage() {
   const sopId = Number(id);
   const [data, setData] = useState<(Sop & { items: CheckItem[] }) | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState("gemini-2.5-flash");
-  const [models, setModels] = useState<{ id: string; provider: "gemini" | "openai" | "anthropic"; label: string; hint: string }[]>([]);
+  const [model, setModel] = useState("gpt-5.6-terra");
+  const [models, setModels] = useState<{ id: string; label: string; hint: string }[]>([]);
 
   const refresh = () =>
     getSop(sopId)

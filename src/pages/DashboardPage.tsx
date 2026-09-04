@@ -7,17 +7,16 @@ import { ResultText, StatusBadge } from "../components/Badges";
 import { useAuth } from "../lib/auth";
 
 function VlmBanner({ vlm }: { vlm: VlmStatus }) {
-  if (vlm.mode === "hidden") return null;
-  if (vlm.mode === "none") {
+  if (!vlm.ready) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        尚未配置视觉模型。请在系统设置中填写供应商、模型名称与 API Key，并点击「测试模型连接」。
+        视觉模型未就绪。请在系统设置中选择模型并测试连接。
       </div>
     );
   }
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-      视觉模型已就绪（{vlm.mode}{vlm.model ? ` · ${vlm.model}` : ""}）。
+      视觉模型已就绪{vlm.model ? ` · ${vlm.model}` : ""}。
     </div>
   );
 }

@@ -19,7 +19,7 @@ export function AnalysisNewPage() {
   const [images, setImages] = useState<File[]>([]);
   const [intervalSec, setIntervalSec] = useState(defaults.frameIntervalSec || 5);
   const [maxFrames, setMaxFrames] = useState(defaults.maxFrames || 30);
-  const [model, setModel] = useState("gemini-2.5-flash");
+  const [model, setModel] = useState("gpt-5.6-terra");
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

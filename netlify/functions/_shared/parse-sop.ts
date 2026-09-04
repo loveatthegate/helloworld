@@ -57,7 +57,7 @@ export async function parseSopJob(sopId: number): Promise<void> {
       throw new Error("无法从文件中提取内容，请上传 PDF、Word、图片或文本手册");
     }
 
-    const model = getModel(sop.modelUsed || "gemini-2.5-flash");
+    const model = getModel(sop.modelUsed);
     const status = await getVlmStatus();
     const canUseModel = status.ready && (Boolean(extracted.text) || extracted.images.length > 0);
 

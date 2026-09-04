@@ -108,9 +108,9 @@ export const appSettings = pgTable("app_settings", {
   id: serial().primaryKey(),
   defaultModel: varchar("default_model", { length: 128 })
     .notNull()
-    .default("gemini-2.5-flash"),
-  provider: varchar({ length: 32 }).notNull().default("gemini"),
-  modelName: varchar("model_name", { length: 128 }).notNull().default("gemini-2.5-flash"),
+    .default("gpt-5.6-terra"),
+  provider: varchar({ length: 32 }).notNull().default("custom"),
+  modelName: varchar("model_name", { length: 128 }).notNull().default("gpt-5.6-terra"),
   apiKey: text("api_key"),
   baseUrl: varchar("base_url", { length: 512 }),
   frameIntervalSec: real("frame_interval_sec").notNull().default(5),

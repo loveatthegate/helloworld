@@ -24,7 +24,7 @@ import {
   type AuthUser,
 } from "./auth";
 import { hashPassword, verifyPassword } from "./password";
-import { ALLOWED_INTERVALS, getSettingsRow, maskKey, normalizeInterval } from "./settings";
+import { ALLOWED_INTERVALS, getSettingsRow, normalizeInterval } from "./settings";
 
 type Env = { Variables: { user: AuthUser } };
 const app = new Hono<Env>().basePath("/api");
@@ -120,7 +120,8 @@ function sanitizeAnalysis(user: AuthUser, row: typeof schema.analyses.$inferSele
 }
 
 app.get("/health", async (c) => {
-  return c.json({ ok: true, vlm: await getVlmStatus() });
+  const vlm = await getVlmStatus();
+  return c.json({ ok: true, vlm: { ready: vlm.ready } });
 });
 
 app.post("/login", async (c) => {
@@ -251,68 +252,51 @@ app.patch("/users/:id", async (c) => {
   });
 });
 
-app.get("/settings", async (c) => {
-  const user = c.get("user");
-  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可查看系统设置" }, 403);
-  const settings = await getSettingsRow();
-  return c.json({
-    defaultModel: settings.defaultModel,
-    provider: settings.provider,
-    modelName: settings.modelName,
-    apiKeyMasked: maskKey(settings.apiKey),
-    hasApiKey: Boolean(settings.apiKey),
-    baseUrl: settings.baseUrl || "",
+function publicSettings(settings: Awaited<ReturnType<typeof getSettingsRow>>, vlm: Awaited<ReturnType<typeof getVlmStatus>>) {
+  const model = getModel(settings.modelName || settings.defaultModel).id;
+  return {
+    modelName: model,
+    defaultModel: model,
     frameIntervalSec: normalizeInterval(settings.frameIntervalSec),
     maxFrames: settings.maxFrames,
     availableModels: VLM_MODELS,
     intervals: ALLOWED_INTERVALS,
-    vlm: await getVlmStatus(),
-  });
+    vlm,
+  };
+}
+
+app.get("/settings", async (c) => {
+  const user = c.get("user");
+  if (!isAdmin(user)) return c.json({ error: "仅超级管理员可查看系统设置" }, 403);
+  const settings = await getSettingsRow();
+  return c.json(publicSettings(settings, await getVlmStatus()));
 });
 
 app.put("/settings", async (c) => {
   const user = c.get("user");
   if (!isAdmin(user)) return c.json({ error: "仅超级管理员可修改系统设置" }, 403);
   const body = await c.req.json<{
-    provider?: string;
     modelName?: string;
-    apiKey?: string;
-    baseUrl?: string;
     frameIntervalSec?: number;
     maxFrames?: number;
-    defaultModel?: string;
   }>();
   const db = await getDb();
   const current = await getSettingsRow();
-  const keepKey = !body.apiKey || body.apiKey.includes("•") || body.apiKey.includes("*");
-  const modelName = body.modelName?.trim() || current.modelName;
+  const modelName = getModel(body.modelName || current.modelName || current.defaultModel).id;
   const [updated] = await db
     .update(schema.appSettings)
     .set({
-      provider: body.provider || current.provider,
       modelName,
-      defaultModel: body.defaultModel || modelName,
-      apiKey: keepKey ? current.apiKey : body.apiKey,
-      baseUrl: body.baseUrl === undefined ? current.baseUrl : body.baseUrl || null,
+      defaultModel: modelName,
+      apiKey: null,
+      baseUrl: null,
       frameIntervalSec: normalizeInterval(body.frameIntervalSec ?? current.frameIntervalSec),
       maxFrames: Math.min(60, Math.max(4, Number(body.maxFrames ?? current.maxFrames))),
       updatedAt: new Date(),
     })
     .where(eq(schema.appSettings.id, current.id))
     .returning();
-  return c.json({
-    defaultModel: updated.defaultModel,
-    provider: updated.provider,
-    modelName: updated.modelName,
-    apiKeyMasked: maskKey(updated.apiKey),
-    hasApiKey: Boolean(updated.apiKey),
-    baseUrl: updated.baseUrl || "",
-    frameIntervalSec: normalizeInterval(updated.frameIntervalSec),
-    maxFrames: updated.maxFrames,
-    availableModels: VLM_MODELS,
-    intervals: ALLOWED_INTERVALS,
-    vlm: await getVlmStatus(),
-  });
+  return c.json(publicSettings(updated, await getVlmStatus()));
 });
 
 app.post("/settings/test", async (c) => {
@@ -358,7 +342,7 @@ app.post("/sops", async (c) => {
   const settings = await getSettingsRow();
   const model = isAdmin(user)
     ? getModel(String(form.get("model") || settings.modelName || settings.defaultModel)).id
-    : settings.modelName || settings.defaultModel;
+    : getModel(settings.modelName || settings.defaultModel).id;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.byteLength > 5.5 * 1024 * 1024) {
     return c.json({ error: "单份 SOP 请小于 5.5MB" }, 413);
@@ -402,7 +386,7 @@ app.post("/sops/:id/parse", async (c) => {
   const body = await c.req.json<{ model?: string }>().catch(() => ({}) as { model?: string });
   const db = await getDb();
   const settings = await getSettingsRow();
-  const model = isAdmin(user) && body.model ? getModel(body.model).id : settings.modelName || settings.defaultModel;
+  const model = getModel(isAdmin(user) && body.model ? body.model : settings.modelName || settings.defaultModel).id;
   await db
     .update(schema.sops)
     .set({ modelUsed: model, status: "parsing", updatedAt: new Date() })
@@ -469,7 +453,7 @@ app.get("/dashboard", async (c) => {
     analyses: Number(analysisCount.total),
     analysesCompleted: Number(completedCount.total),
     recent: recent.map((row) => sanitizeAnalysis(user, row)),
-    vlm: isAdmin(user) ? await getVlmStatus() : { ready: (await getVlmStatus()).ready, mode: "hidden" },
+    vlm: isAdmin(user) ? await getVlmStatus() : { ready: (await getVlmStatus()).ready },
   });
 });
 
@@ -514,7 +498,7 @@ app.post("/analyses", async (c) => {
   if (sop.status !== "ready") return c.json({ error: "请先等待手册解析完成" }, 400);
   const settings = await getSettingsRow();
   const db = await getDb();
-  const model = isAdmin(user) && body.model ? getModel(body.model).id : settings.modelName || settings.defaultModel;
+  const model = getModel(isAdmin(user) && body.model ? body.model : settings.modelName || settings.defaultModel).id;
   const [created] = await db
     .insert(schema.analyses)
     .values({

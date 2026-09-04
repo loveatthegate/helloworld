@@ -107,7 +107,7 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
           checkItemId: item.id,
           verdict: "not_observed" as const,
           confidence: 0,
-          reasoning: "未配置视觉模型密钥，无法对抽帧做履职判定。请设置 GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY，或部署到 Netlify 并启用 AI Gateway 后重新分析。",
+          reasoning: "未配置视觉模型密钥，无法对抽帧做履职判定。请由管理员完成模型密钥配置后重新分析。",
           evidenceFrameIds: [],
           observedAtSec: null,
         })),

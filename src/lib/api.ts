@@ -7,26 +7,18 @@ export type AuthUser = {
 
 export type VlmStatus = {
   ready: boolean;
-  mode: "gateway" | "byok" | "settings" | "none" | "hidden" | string;
-  provider?: string;
   model?: string;
-  providers?: { gemini: boolean; openai: boolean; anthropic: boolean };
 };
 
 export type VlmModel = {
   id: string;
-  provider: "gemini" | "openai" | "anthropic";
   label: string;
   hint: string;
 };
 
 export type Settings = {
   defaultModel: string;
-  provider: string;
   modelName: string;
-  apiKeyMasked: string;
-  hasApiKey: boolean;
-  baseUrl: string;
   frameIntervalSec: number;
   maxFrames: number;
   availableModels: VlmModel[];
@@ -142,7 +134,7 @@ export const saveSettings = (body: Record<string, unknown>) =>
     body: JSON.stringify(body),
   });
 export const testSettings = () =>
-  api<{ ok: boolean; sample?: string; model?: string; provider?: string; error?: string }>("/api/settings/test", {
+  api<{ ok: boolean; sample?: string; model?: string; error?: string }>("/api/settings/test", {
     method: "POST",
   });
 

@@ -11,7 +11,7 @@ export function SopNewPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
-  const [model, setModel] = useState("gemini-2.5-flash");
+  const [model, setModel] = useState("gpt-5.6-terra");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
