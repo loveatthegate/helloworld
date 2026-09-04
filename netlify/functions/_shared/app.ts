@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { getCookie } from "hono/cookie";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema } from "../../../db/index";
 import { deleteBlob, getBlob, putBlob } from "./blobs";
 import { parseSopJob } from "./parse-sop";
@@ -75,6 +75,14 @@ function filenameFrom(file: File, fallback: string) {
 
 function fileUrl(key: string) {
   return `/api/files?key=${encodeURIComponent(key)}`;
+}
+
+function sopNotDeleted() {
+  return isNull(schema.sops.deletedAt);
+}
+
+function sopListFilter(user: AuthUser) {
+  return isAdmin(user) ? sopNotDeleted() : and(eq(schema.sops.userId, user.id), sopNotDeleted());
 }
 
 async function requireOwnedSop(user: AuthUser, id: number) {
@@ -464,9 +472,7 @@ app.post("/settings/appearance/:kind", async (c) => {
 app.get("/sops", async (c) => {
   const user = c.get("user");
   const db = await getDb();
-  const rows = isAdmin(user)
-    ? await db.select().from(schema.sops).orderBy(desc(schema.sops.createdAt))
-    : await db.select().from(schema.sops).where(eq(schema.sops.userId, user.id)).orderBy(desc(schema.sops.createdAt));
+  const rows = await db.select().from(schema.sops).where(sopListFilter(user)).orderBy(desc(schema.sops.createdAt));
   const itemCounts = await db
     .select({ sopId: schema.sopCheckItems.sopId, total: count() })
     .from(schema.sopCheckItems)
@@ -474,12 +480,33 @@ app.get("/sops", async (c) => {
   const countMap = new Map(itemCounts.map((r) => [r.sopId, Number(r.total)]));
   const owners = await db.select().from(schema.users);
   const ownerMap = new Map(owners.map((u) => [u.id, u.displayName]));
+  const related = rows.length
+    ? await db
+        .select({
+          sopId: schema.analyses.sopId,
+          status: schema.analyses.status,
+          total: count(),
+        })
+        .from(schema.analyses)
+        .where(inArray(schema.analyses.sopId, rows.map((row) => row.id)))
+        .groupBy(schema.analyses.sopId, schema.analyses.status)
+    : [];
+  const analysisCount = new Map<number, number>();
+  const analyzingCount = new Map<number, number>();
+  for (const row of related) {
+    analysisCount.set(row.sopId, (analysisCount.get(row.sopId) ?? 0) + Number(row.total));
+    if (row.status === "analyzing" || row.status === "uploading") {
+      analyzingCount.set(row.sopId, (analyzingCount.get(row.sopId) ?? 0) + Number(row.total));
+    }
+  }
   return c.json(
     rows.map((row) => ({
       ...row,
       modelUsed: isAdmin(user) ? row.modelUsed : undefined,
       checkItemCount: countMap.get(row.id) ?? 0,
       ownerName: isAdmin(user) ? ownerMap.get(row.userId ?? 0) : undefined,
+      analysisCount: analysisCount.get(row.id) ?? 0,
+      analyzingCount: analyzingCount.get(row.id) ?? 0,
     })),
   );
 });
@@ -542,6 +569,7 @@ app.post("/sops/:id/parse", async (c) => {
   const user = c.get("user");
   const sop = await requireOwnedSop(user, Number(c.req.param("id")));
   if (!sop) return c.json({ error: "手册不存在" }, 404);
+  if (sop.deletedAt) return c.json({ error: "手册已删除，不能重新解析" }, 400);
   const body = await c.req.json<{ model?: string }>().catch(() => ({}) as { model?: string });
   const db = await getDb();
   const settings = await getSettingsRow();
@@ -566,18 +594,19 @@ app.delete("/sops/:id", async (c) => {
   const user = c.get("user");
   if (!isAdmin(user)) return c.json({ error: "仅超级管理员可删除手册" }, 403);
   const sop = await requireOwnedSop(user, Number(c.req.param("id")));
-  if (!sop) return c.json({ error: "手册不存在" }, 404);
+  if (!sop || sop.deletedAt) return c.json({ error: "手册不存在" }, 404);
   const db = await getDb();
   const related = await db.select().from(schema.analyses).where(eq(schema.analyses.sopId, sop.id));
-  for (const row of related) {
-    const frames = await db.select().from(schema.analysisFrames).where(eq(schema.analysisFrames.analysisId, row.id));
-    for (const frame of frames) await deleteBlob(frame.blobKey);
-    if (row.videoBlobKey) await deleteBlob(row.videoBlobKey);
-    await db.delete(schema.analyses).where(eq(schema.analyses.id, row.id));
-  }
-  await deleteBlob(sop.blobKey);
-  await db.delete(schema.sops).where(eq(schema.sops.id, sop.id));
-  return c.json({ ok: true });
+  await db
+    .update(schema.sops)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(eq(schema.sops.id, sop.id));
+  return c.json({
+    ok: true,
+    archived: true,
+    analysisCount: related.length,
+    analyzingCount: related.filter((row) => row.status === "analyzing" || row.status === "uploading").length,
+  });
 });
 
 app.get("/files", async (c) => {
@@ -611,15 +640,13 @@ app.get("/files", async (c) => {
 app.get("/dashboard", async (c) => {
   const user = c.get("user");
   const db = await getDb();
-  const sopOwned = isAdmin(user) ? undefined : eq(schema.sops.userId, user.id);
+  const sopScope = sopListFilter(user);
   const analysisOwned = isAdmin(user) ? undefined : eq(schema.analyses.userId, user.id);
-  const readyWhere = sopOwned ? and(eq(schema.sops.status, "ready"), sopOwned) : eq(schema.sops.status, "ready");
+  const readyWhere = and(eq(schema.sops.status, "ready"), sopScope);
   const completedWhere = analysisOwned
     ? and(eq(schema.analyses.status, "completed"), analysisOwned)
     : eq(schema.analyses.status, "completed");
-  const sopCountQuery = sopOwned
-    ? db.select({ total: count() }).from(schema.sops).where(sopOwned)
-    : db.select({ total: count() }).from(schema.sops);
+  const sopCountQuery = db.select({ total: count() }).from(schema.sops).where(sopScope);
   const analysisCountQuery = analysisOwned
     ? db.select({ total: count() }).from(schema.analyses).where(analysisOwned)
     : db.select({ total: count() }).from(schema.analyses);
@@ -682,6 +709,7 @@ app.post("/analyses", async (c) => {
   }
   const sop = await requireOwnedSop(user, body.sopId);
   if (!sop) return c.json({ error: "手册不存在或无权使用" }, 404);
+  if (sop.deletedAt) return c.json({ error: "手册已删除，不能再新建分析" }, 400);
   if (sop.status !== "ready") return c.json({ error: "请先等待手册解析完成" }, 400);
   const settings = await getSettingsRow();
   const db = await getDb();
@@ -804,6 +832,10 @@ app.post("/analyses/:id/analyze", async (c) => {
   const analysis = await requireOwnedAnalysis(user, Number(c.req.param("id")));
   if (!analysis) return c.json({ error: "任务不存在" }, 404);
   const db = await getDb();
+  const [sop] = await db.select().from(schema.sops).where(eq(schema.sops.id, analysis.sopId)).limit(1);
+  if (sop?.deletedAt && (analysis.status === "completed" || analysis.status === "failed")) {
+    return c.json({ error: "手册已删除，不能重新分析。已有报告仍可查看。" }, 400);
+  }
   if (analysis.status === "completed" || analysis.status === "failed") {
     await db.delete(schema.analysisItemResults).where(eq(schema.analysisItemResults.analysisId, analysis.id));
   }
@@ -934,6 +966,7 @@ app.get("/analyses/:id", async (c) => {
     ...sanitizeAnalysis(user, analysis),
     ...extras,
     sop,
+    sopDeleted: Boolean(sop?.deletedAt),
     frames: frames.map((f) => ({ ...f, url: fileUrl(f.blobKey) })),
     items: items.map((item) => {
       const result = resultByItem.get(item.id);

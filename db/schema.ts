@@ -41,6 +41,7 @@ export const sops = pgTable("sops", {
   parseError: text("parse_error"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
 });
 
 export const sopCheckItems = pgTable("sop_check_items", {

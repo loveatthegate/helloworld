@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getSettings,
   resetAppearance,
@@ -12,6 +12,45 @@ import {
 import { ModelSelect } from "../components/ModelSelect";
 import { PageSkeleton } from "../components/Skeleton";
 import { useBranding } from "../lib/branding";
+
+function ImageField({
+  label,
+  preview,
+  onFile,
+}: {
+  label: string;
+  preview?: string | null;
+  onFile: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="text-sm">
+      <span className="mb-1 block text-slate-600">{label}</span>
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) onFile(file);
+          }}
+        />
+        <button
+          type="button"
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50"
+          onClick={() => inputRef.current?.click()}
+        >
+          {preview ? "更换图片" : "上传图片"}
+        </button>
+        {preview && <span className="text-xs text-slate-400">已设置</span>}
+      </div>
+      {preview && <img src={`${preview}?t=${Date.now()}`} alt="" className={label.includes("登录") ? "mt-2 h-24 w-full rounded object-cover" : "mt-2 h-12 w-12 rounded object-cover"} />}
+    </div>
+  );
+}
 
 export function SettingsPage() {
   const { refresh } = useBranding();
@@ -208,44 +247,30 @@ export function SettingsPage() {
                 className="h-10 w-20 rounded-lg border border-slate-300"
               />
             </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">系统 Logo</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  void uploadAppearanceImage("logo", file)
-                    .then((next) => {
-                      setAppearance(next);
-                      return refresh();
-                    })
-                    .catch((err: Error) => setError(err.message));
-                }}
-              />
-              {appearance.logoUrl && <img src={`${appearance.logoUrl}?t=${Date.now()}`} alt="" className="mt-2 h-12 w-12 rounded object-cover" />}
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">登录页图片</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  void uploadAppearanceImage("login-image", file)
-                    .then((next) => {
-                      setAppearance(next);
-                      return refresh();
-                    })
-                    .catch((err: Error) => setError(err.message));
-                }}
-              />
-              {appearance.loginImageUrl && (
-                <img src={`${appearance.loginImageUrl}?t=${Date.now()}`} alt="" className="mt-2 h-24 w-full rounded object-cover" />
-              )}
-            </label>
+            <ImageField
+              label="系统 Logo"
+              preview={appearance.logoUrl}
+              onFile={(file) => {
+                void uploadAppearanceImage("logo", file)
+                  .then((next) => {
+                    setAppearance(next);
+                    return refresh();
+                  })
+                  .catch((err: Error) => setError(err.message));
+              }}
+            />
+            <ImageField
+              label="登录页图片"
+              preview={appearance.loginImageUrl}
+              onFile={(file) => {
+                void uploadAppearanceImage("login-image", file)
+                  .then((next) => {
+                    setAppearance(next);
+                    return refresh();
+                  })
+                  .catch((err: Error) => setError(err.message));
+              }}
+            />
           </div>
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <div className="flex flex-wrap gap-3">

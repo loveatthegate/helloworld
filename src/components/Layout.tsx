@@ -20,8 +20,8 @@ export function Layout() {
   ].filter((item) => !item.adminOnly || isAdmin);
 
   return (
-    <div className="min-h-screen lg:flex">
-      <aside className="bg-ink text-slate-100 lg:fixed lg:inset-y-0 lg:left-0 lg:z-20 lg:flex lg:h-screen lg:w-60 lg:flex-col">
+    <div className="min-h-screen">
+      <aside className="fixed inset-y-0 left-0 z-20 flex h-screen w-60 flex-col bg-ink text-slate-100">
         <div className="flex items-center gap-3 border-b border-white/10 px-5 py-6">
           {branding.logoUrl ? (
             <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
@@ -52,21 +52,22 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-        {branding.companyName && <div className="px-5 pb-4 text-[11px] text-slate-500">{branding.companyName}</div>}
+        <div className="mt-auto border-t border-white/10 px-4 py-4">
+          <div className="text-sm text-white">{user.displayName}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">{isAdmin ? "超级管理员" : "普通用户"}</div>
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white"
+            onClick={() => void logout()}
+          >
+            <LogOut size={14} /> 退出
+          </button>
+          {branding.companyName && <div className="mt-3 text-[11px] text-slate-500">{branding.companyName}</div>}
+        </div>
       </aside>
-      <div className="min-w-0 flex-1 lg:pl-60">
+      <div className="min-w-0 pl-60">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
-          <div className="flex items-center justify-between px-4 py-3 lg:px-8">
-            <div className="text-sm text-slate-500">{branding.tagline}</div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="rounded-full bg-paper px-3 py-1 text-xs text-ink">
-                {user.displayName} · {isAdmin ? "超级管理员" : "普通用户"}
-              </span>
-              <button type="button" className="inline-flex items-center gap-1 text-slate-500 hover:text-ink" onClick={() => void logout()}>
-                <LogOut size={14} /> 退出
-              </button>
-            </div>
-          </div>
+          <div className="px-4 py-3 text-sm text-slate-500 lg:px-8">{branding.tagline}</div>
         </header>
         <main className="px-4 py-6 lg:px-8 lg:py-8">
           <Outlet />

@@ -75,9 +75,16 @@ export function AnalysisDetailPage() {
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
             <span>
               手册：
-              <Link className="text-teal" to={`/sops/${data.sopId}`}>
-                {data.sop?.title}
-              </Link>
+              {data.sopDeleted ? (
+                <span>
+                  {data.sop?.title || "已删除的手册"}
+                  <span className="ml-1 text-amber-700">（手册已删除，报告仍保留）</span>
+                </span>
+              ) : (
+                <Link className="text-teal" to={`/sops/${data.sopId}`}>
+                  {data.sop?.title}
+                </Link>
+              )}
             </span>
             <span>{data.sourceType === "images" ? "现场照片" : "作业视频"}</span>
             {isAdmin && data.modelUsed && <span>模型 {data.modelUsed}</span>}
@@ -92,7 +99,7 @@ export function AnalysisDetailPage() {
             <ResultText result={data.overallResult} />
           </div>
           <div className="text-sm text-slate-500">满足率 {data.status === "completed" ? `${passRate}%` : "—"}</div>
-          {(data.status === "completed" || data.status === "failed") && (
+          {(data.status === "completed" || data.status === "failed") && !data.sopDeleted && (
             <button
               type="button"
               className="mt-3 text-xs text-teal"
@@ -149,7 +156,7 @@ export function AnalysisDetailPage() {
                 {skipping === currentItem.id ? "跳过中…" : `跳过「${currentItem.title}」`}
               </button>
             )}
-            {data.stalled && (
+            {data.stalled && !data.sopDeleted && (
               <button
                 type="button"
                 className="rounded-lg bg-teal px-3 py-1.5 text-sm text-white"

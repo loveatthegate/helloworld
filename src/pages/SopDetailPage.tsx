@@ -93,6 +93,11 @@ export function SopDetailPage() {
   return (
     <div className="space-y-6">
       <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "SOP 手册", to: "/sops" }, { label: data.title }]} />
+      {data.deletedAt && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          此手册已从列表删除。已有分析报告仍可查看，但不能再新建分析或重新解析。
+        </div>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -105,12 +110,14 @@ export function SopDetailPage() {
             {isAdmin && data.modelUsed ? ` · 模型 ${data.modelUsed}` : ""} · {formatDate(data.updatedAt)}
           </div>
         </div>
+        {!data.deletedAt && (
         <Link
           to={`/analyses/new?sopId=${data.id}`}
           className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2"
         >
           用此手册分析
         </Link>
+        )}
       </div>
 
       {data.status === "failed" && (
@@ -133,7 +140,7 @@ export function SopDetailPage() {
         )}
       </div>
 
-      {isAdmin && (
+      {isAdmin && !data.deletedAt && (
         <section className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
           <h2 className="font-medium">重新解析</h2>
           <p className="mt-1 text-sm text-slate-500">可换一个视觉/语言模型再抽一次检查项。</p>

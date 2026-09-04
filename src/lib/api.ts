@@ -51,6 +51,9 @@ export type Sop = {
   updatedAt: string;
   checkItemCount?: number;
   ownerName?: string;
+  deletedAt?: string | null;
+  analysisCount?: number;
+  analyzingCount?: number;
 };
 
 export type CheckItem = {
@@ -222,6 +225,7 @@ export const getAnalysis = (id: number) =>
   api<
     Analysis & {
       sop: Sop;
+      sopDeleted?: boolean;
       frames: Frame[];
       items: Array<CheckItem & { result: ItemResult | null; evidence: Frame[] }>;
     }

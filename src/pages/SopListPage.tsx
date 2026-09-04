@@ -80,7 +80,15 @@ export function SopListPage() {
       <ConfirmDialog
         open={Boolean(pending)}
         title="删除手册"
-        message={`确认删除「${pending?.title}」？相关分析结果也会一并删除，此操作不可恢复。`}
+        message={
+          pending
+            ? `手册会从列表中移除，已有的 ${pending.analysisCount ?? 0} 份分析报告会保留，但不能再对照此手册新建或重新分析。${
+                pending.analyzingCount
+                  ? ` 当前有 ${pending.analyzingCount} 个任务正在分析，删除后它们会继续跑完并生成报告。`
+                  : ""
+              }`
+            : ""
+        }
         confirmText="删除手册"
         busy={busy}
         onCancel={() => setPending(null)}
