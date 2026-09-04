@@ -120,7 +120,8 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
       return;
     }
 
-    const frameLimit = analysis.sourceType === "images" ? frames.length : Math.min(frames.length, analysis.maxFrames, 8);
+    const frameLimit = analysis.sourceType === "images" ? frames.length : Math.min(frames.length, analysis.maxFrames, 6);
+    await setProgress(analysisId, 0, items.length, `正在读取 ${frameLimit} 张画面…`);
     const images: { mimeType: string; base64: string }[] = [];
     const frameNotes: string[] = [];
     for (const frame of frames.slice(0, frameLimit)) {
@@ -153,7 +154,10 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
         continue;
       }
 
-      await setProgress(analysisId, i + 1, items.length, `正在分析 ${i + 1}/${items.length}：${item.title}`);
+      await setProgress(analysisId, i + 1, items.length, `正在分析 ${i + 1}/${items.length}：${item.title}（模型推理中）`);
+      const heartbeat = setInterval(() => {
+        void setProgress(analysisId, i + 1, items.length, `仍在分析 ${i + 1}/${items.length}：${item.title}，模型尚未返回`);
+      }, 12_000);
       const actions = Array.isArray(item.keyActions) ? item.keyActions.join("；") : "";
       const checklist = `步骤${item.stepOrder} [${item.category || "操作"}] ${item.title}
 说明：${item.description || ""}
@@ -170,6 +174,7 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
           90_000,
           `步骤「${item.title}」`,
         );
+        clearInterval(heartbeat);
         const found = parseSingleStepJson(raw);
         const indexes = [
           ...(found.evidenceFrameIndexes ?? []),
@@ -197,6 +202,7 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
           observedAtSec: found.observedAtSec ?? evidenceFrames[0]?.timestampSec ?? null,
         });
       } catch (error) {
+        clearInterval(heartbeat);
         const again = await db
           .select()
           .from(schema.analysisItemResults)
