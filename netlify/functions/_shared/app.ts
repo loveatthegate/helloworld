@@ -832,10 +832,18 @@ app.post("/analyses/:id/items/:itemId/skip", async (c) => {
     await db
       .update(schema.analyses)
       .set({
-        progressMessage: `已跳过「${item.title}」`,
+        status: "analyzing",
+        progressMessage: `已跳过「${item.title}」，继续分析剩余步骤…`,
         progressUpdatedAt: new Date(),
       })
       .where(eq(schema.analyses.id, analysis.id));
+    if (isStalled(analysis) || analysis.status === "failed") {
+      try {
+        await enqueueAnalyze(analysis.id, analyzeVideoJob);
+      } catch (error) {
+        console.error("resume after skip failed", error);
+      }
+    }
   }
   return c.json({ ok: true });
 });

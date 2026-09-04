@@ -24,20 +24,40 @@ function overallFromVerdicts(verdicts: string[]): "pass" | "fail" | "partial" {
   return "partial";
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+function withTimeout<T>(factory: (signal: AbortSignal) => Promise<T>, ms: number, label: string) {
+  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}超过 ${Math.round(ms / 1000)} 秒未返回`)), ms);
-    promise.then(
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`${label}超过 ${Math.round(ms / 1000)} 秒未返回`));
+    }, ms);
+    factory(controller.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
       },
       (error) => {
         clearTimeout(timer);
+        if (controller.signal.aborted) {
+          reject(new Error(`${label}超过 ${Math.round(ms / 1000)} 秒未返回`));
+          return;
+        }
         reject(error);
       },
     );
   });
+}
+
+function pickFrames<T>(frames: T[], limit: number) {
+  if (frames.length <= limit) return frames;
+  if (limit <= 1) return frames.slice(0, 1);
+  const picked: T[] = [];
+  for (let i = 0; i < limit; i++) {
+    const idx = Math.round((i * (frames.length - 1)) / (limit - 1));
+    const frame = frames[idx]!;
+    if (!picked.includes(frame)) picked.push(frame);
+  }
+  return picked;
 }
 
 async function setProgress(
@@ -120,11 +140,12 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
       return;
     }
 
-    const frameLimit = analysis.sourceType === "images" ? frames.length : Math.min(frames.length, analysis.maxFrames, 6);
-    await setProgress(analysisId, 0, items.length, `正在读取 ${frameLimit} 张画面…`);
+    const frameLimit = analysis.sourceType === "images" ? Math.min(frames.length, 4) : Math.min(frames.length, analysis.maxFrames, 3);
+    const selectedFrames = pickFrames(frames, frameLimit);
+    await setProgress(analysisId, 0, items.length, `正在读取 ${selectedFrames.length} 张画面…`);
     const images: { mimeType: string; base64: string }[] = [];
     const frameNotes: string[] = [];
-    for (const frame of frames.slice(0, frameLimit)) {
+    for (const frame of selectedFrames) {
       const blob = await getBlob(frame.blobKey);
       if (!blob) continue;
       images.push({
@@ -167,10 +188,15 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
 
       try {
         const raw = await withTimeout(
-          generateVlmText(analysis.modelUsed, {
-            text: `${STEP_PROMPT}\n\n检查项：\n${checklist}\n\n画面列表：\n${frameNotes.join("\n")}`,
-            images,
-          }),
+          (signal) =>
+            generateVlmText(
+              analysis.modelUsed,
+              {
+                text: `${STEP_PROMPT}\n\n检查项：\n${checklist}\n\n画面列表：\n${frameNotes.join("\n")}`,
+                images,
+              },
+              signal,
+            ),
           90_000,
           `步骤「${item.title}」`,
         );

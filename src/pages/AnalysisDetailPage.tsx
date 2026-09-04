@@ -49,8 +49,11 @@ export function AnalysisDetailPage() {
   const finished = data.items.filter((item) => item.result).length;
   const passRate = Math.round((counts.pass / total) * 100);
   const analyzing = data.status === "analyzing" || data.status === "uploading";
-  const currentTitle = data.items.find((item) => !item.result)?.title;
+  const currentItem = data.items.find((item) => !item.result);
   const percent = Math.round((finished / total) * 100);
+  const waitedSec = data.progressUpdatedAt
+    ? Math.max(0, Math.round((Date.now() - new Date(data.progressUpdatedAt).getTime()) / 1000))
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -114,7 +117,14 @@ export function AnalysisDetailPage() {
                     ? `抽帧已完成（${data.frames.length} 张），模型正在对照 SOP 步骤。`
                     : "正在准备画面…")}
               </p>
-              {currentTitle && <p className="mt-1 text-xs text-amber-800">当前步骤：{currentTitle}</p>}
+              {currentItem && <p className="mt-1 text-xs text-amber-800">当前步骤：{currentItem.title}</p>}
+              <p className="mt-1 text-xs text-amber-800">
+                {data.stalled
+                  ? "后台已超过 90 秒没有心跳，任务可能已中断，不是抽帧失败。"
+                  : waitedSec > 0
+                    ? `距上次进度更新 ${waitedSec} 秒。模型看多张图通常需要 30–90 秒。`
+                    : "已提交模型，等待返回。"}
+              </p>
             </div>
             <div className="text-sm text-amber-900">
               {finished}/{total} 步
@@ -123,20 +133,32 @@ export function AnalysisDetailPage() {
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-amber-200">
             <div className="h-full bg-teal transition-all" style={{ width: `${percent}%` }} />
           </div>
-          {data.stalled && (
-            <p className="mt-3 text-sm text-amber-950">
-              当前步骤超过 90 秒没有新进展，多半是模型较慢或后台任务中断，不是抽帧失败。可以跳过这一步，或点击重新分析。
-            </p>
-          )}
-          {data.stalled && (
-            <button
-              type="button"
-              className="mt-2 text-sm text-teal"
-              onClick={() => void api(`/api/analyses/${data.id}/analyze`, { method: "POST" }).then(() => refresh())}
-            >
-              继续分析剩余步骤
-            </button>
-          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {currentItem && (
+              <button
+                type="button"
+                disabled={skipping === currentItem.id}
+                className="rounded-lg bg-white px-3 py-1.5 text-sm text-amber-950 ring-1 ring-amber-300 hover:bg-amber-100"
+                onClick={() => {
+                  setSkipping(currentItem.id);
+                  void skipAnalysisItem(data.id, currentItem.id)
+                    .then(() => refresh())
+                    .finally(() => setSkipping(null));
+                }}
+              >
+                {skipping === currentItem.id ? "跳过中…" : `跳过「${currentItem.title}」`}
+              </button>
+            )}
+            {data.stalled && (
+              <button
+                type="button"
+                className="rounded-lg bg-teal px-3 py-1.5 text-sm text-white"
+                onClick={() => void api(`/api/analyses/${data.id}/analyze`, { method: "POST" }).then(() => refresh())}
+              >
+                继续分析剩余步骤
+              </button>
+            )}
+          </div>
         </section>
       )}
 
@@ -151,13 +173,14 @@ export function AnalysisDetailPage() {
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{data.errorMessage}</div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-5">
         {(
           [
             ["pass", counts.pass],
             ["fail", counts.fail],
             ["uncertain", counts.uncertain],
             ["not_observed", counts.not_observed],
+            ["skipped", counts.skipped],
           ] as const
         ).map(([key, n]) => (
           <div key={key} className="rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200">

@@ -42,7 +42,11 @@ function client() {
   return new OpenAI({ apiKey, baseURL });
 }
 
-export async function generateVlmText(modelId: string | undefined, content: ChatContent): Promise<string> {
+export async function generateVlmText(
+  modelId: string | undefined,
+  content: ChatContent,
+  signal?: AbortSignal,
+): Promise<string> {
   if (!isVlmConfigured()) {
     throw new Error("视觉模型尚未配置。请由管理员在运行环境中设置密钥后重试。");
   }
@@ -54,19 +58,27 @@ export async function generateVlmText(modelId: string | undefined, content: Chat
       image_url: { url: `data:${image.mimeType};base64,${image.base64}` },
     });
   }
+  const options = signal ? { signal } : undefined;
   let completion;
   try {
-    completion = await client().chat.completions.create({
-      model,
-      temperature: 0.1,
-      max_tokens: 4096,
-      messages: [{ role: "user", content: parts }],
-    });
-  } catch {
-    completion = await client().chat.completions.create({
-      model,
-      messages: [{ role: "user", content: parts }],
-    });
+    completion = await client().chat.completions.create(
+      {
+        model,
+        temperature: 0.1,
+        max_tokens: 4096,
+        messages: [{ role: "user", content: parts }],
+      },
+      options,
+    );
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    completion = await client().chat.completions.create(
+      {
+        model,
+        messages: [{ role: "user", content: parts }],
+      },
+      options,
+    );
   }
   const text = completion.choices[0]?.message?.content;
   if (!text) throw new Error("模型未返回文本");

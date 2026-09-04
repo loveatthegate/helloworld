@@ -21,7 +21,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen lg:flex">
-      <aside className="bg-ink text-slate-100 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-60 lg:shrink-0 lg:flex-col">
+      <aside className="bg-ink text-slate-100 lg:fixed lg:inset-y-0 lg:left-0 lg:z-20 lg:flex lg:h-screen lg:w-60 lg:flex-col">
         <div className="flex items-center gap-3 border-b border-white/10 px-5 py-6">
           {branding.logoUrl ? (
             <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
@@ -54,7 +54,7 @@ export function Layout() {
         </nav>
         {branding.companyName && <div className="px-5 pb-4 text-[11px] text-slate-500">{branding.companyName}</div>}
       </aside>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 lg:pl-60">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
           <div className="flex items-center justify-between px-4 py-3 lg:px-8">
             <div className="text-sm text-slate-500">{branding.tagline}</div>
