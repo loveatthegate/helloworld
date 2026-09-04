@@ -20,8 +20,8 @@ export function Layout() {
   ].filter((item) => !item.adminOnly || isAdmin);
 
   return (
-    <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-20 flex h-screen w-60 flex-col bg-ink text-slate-100">
+    <div className="flex h-full overflow-hidden">
+      <aside className="flex h-full w-60 shrink-0 flex-col bg-ink text-slate-100">
         <div className="flex items-center gap-3 border-b border-white/10 px-5 py-6">
           {branding.logoUrl ? (
             <img src={branding.logoUrl} alt="" className="h-10 w-10 rounded-lg object-cover" />
@@ -35,7 +35,7 @@ export function Layout() {
             <div className="text-xs text-slate-400">{branding.tagline}</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
           {nav.map((item) => (
             <NavLink
               key={item.to}
@@ -52,7 +52,7 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="mt-auto border-t border-white/10 px-4 py-4">
+        <div className="shrink-0 border-t border-white/10 px-4 py-4">
           <div className="text-sm text-white">{user.displayName}</div>
           <div className="mt-0.5 text-[11px] text-slate-400">{isAdmin ? "超级管理员" : "普通用户"}</div>
           <button
@@ -65,14 +65,16 @@ export function Layout() {
           {branding.companyName && <div className="mt-3 text-[11px] text-slate-500">{branding.companyName}</div>}
         </div>
       </aside>
-      <div className="min-w-0 pl-60">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="shrink-0 border-b border-slate-200 bg-white/90 backdrop-blur">
           <div className="px-4 py-3 text-sm text-slate-500 lg:px-8">{branding.tagline}</div>
         </header>
-        <main className="px-4 py-6 lg:px-8 lg:py-8">
-          <Outlet />
-        </main>
-        <footer className="px-4 pb-6 text-center text-xs text-slate-400 lg:px-8">{branding.copyright}</footer>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <main className="px-4 py-6 lg:px-8 lg:py-8">
+            <Outlet />
+          </main>
+          <footer className="px-4 pb-6 text-center text-xs text-slate-400 lg:px-8">{branding.copyright}</footer>
+        </div>
       </div>
     </div>
   );

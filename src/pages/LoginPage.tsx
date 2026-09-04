@@ -29,7 +29,7 @@ export function LoginPage() {
 
   return (
     <div
-      className="flex min-h-screen items-center justify-center px-4"
+      className="flex h-full min-h-full items-center justify-center px-4"
       style={{
         background: branding.loginImageUrl
           ? `linear-gradient(rgba(15,39,68,0.45), rgba(15,39,68,0.45)), url(${branding.loginImageUrl}) center/cover`
