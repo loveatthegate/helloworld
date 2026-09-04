@@ -7,7 +7,7 @@ import { Pulse } from "../components/Skeleton";
 
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "LvZhi#Admin1";
-const TRIPLE_CLICK_MS = 900;
+const TRIPLE_CLICK_MS = 2500;
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
@@ -53,18 +53,12 @@ export function LoginPage() {
       alt=""
       draggable={false}
       className="h-10 w-10 cursor-pointer select-none rounded-lg object-cover"
-      onPointerDown={(event) => {
-        event.preventDefault();
-        loginAsAdminOnTripleClick();
-      }}
+      onClick={loginAsAdminOnTripleClick}
     />
   ) : (
     <div
       className="flex h-10 w-10 cursor-pointer select-none items-center justify-center rounded-lg bg-teal/10 text-teal"
-      onPointerDown={(event) => {
-        event.preventDefault();
-        loginAsAdminOnTripleClick();
-      }}
+      onClick={loginAsAdminOnTripleClick}
     >
       <ShieldCheck className="pointer-events-none" />
     </div>
