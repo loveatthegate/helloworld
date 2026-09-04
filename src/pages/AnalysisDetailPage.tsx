@@ -122,7 +122,7 @@ export function AnalysisDetailPage() {
                 {data.stalled
                   ? "后台已超过 90 秒没有心跳，任务可能已中断，不是抽帧失败。"
                   : waitedSec > 0
-                    ? `距上次进度更新 ${waitedSec} 秒。模型看多张图通常需要 30–90 秒。`
+                    ? `距上次进度更新 ${waitedSec} 秒。视觉模型看图通常需要 1–2 分钟，属正常等待。`
                     : "已提交模型，等待返回。"}
               </p>
             </div>

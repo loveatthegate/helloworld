@@ -197,7 +197,7 @@ export async function analyzeVideoJob(analysisId: number): Promise<void> {
               },
               signal,
             ),
-          90_000,
+          150_000,
           `步骤「${item.title}」`,
         );
         clearInterval(heartbeat);
