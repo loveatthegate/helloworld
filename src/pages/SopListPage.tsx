@@ -65,7 +65,7 @@ export function SopListPage() {
             {isAdmin && (
               <button
                 type="button"
-                className="absolute bottom-3 right-3 z-10 rounded-md bg-black/30 px-2 py-1 text-xs text-white hover:bg-black/50"
+                className="absolute bottom-3 right-3 z-10 rounded-md bg-white/95 px-2.5 py-1 text-xs text-rose-700 shadow hover:bg-white"
                 onClick={(e) => {
                   e.stopPropagation();
                   setPending(sop);

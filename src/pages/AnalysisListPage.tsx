@@ -91,7 +91,7 @@ export function AnalysisListPage() {
             {isAdmin && (
               <button
                 type="button"
-                className="absolute bottom-3 right-3 text-xs text-rose-600"
+                className="absolute bottom-3 right-3 rounded-md bg-white/95 px-2.5 py-1 text-xs text-rose-700 shadow hover:bg-rose-50"
                 onClick={() => setPending(row)}
               >
                 删除
