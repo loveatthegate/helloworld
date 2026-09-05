@@ -56,6 +56,58 @@ export const sopCheckItems = pgTable("sop_check_items", {
   passCriteria: text("pass_criteria"),
   riskHint: text("risk_hint"),
   category: varchar({ length: 64 }),
+  scope: varchar({ length: 32 }).notNull().default("step"),
+  judgeType: varchar("judge_type", { length: 32 }).notNull().default("action"),
+  missingEvidence: varchar("missing_evidence", { length: 32 }).notNull().default("not_observed"),
+  evidenceFrom: varchar("evidence_from", { length: 32 }).notNull().default("any"),
+  segmentSource: varchar("segment_source", { length: 32 }).notNull().default("worker"),
+});
+
+export const cameras = pgTable("cameras", {
+  id: serial().primaryKey(),
+  userId: integer("user_id").references(() => users.id),
+  name: varchar({ length: 128 }).notNull(),
+  rtspUrl: varchar("rtsp_url", { length: 1024 }),
+  previewUrl: varchar("preview_url", { length: 1024 }),
+  role: varchar({ length: 32 }).notNull().default("global"),
+  mount: varchar({ length: 32 }).notNull().default("fixed"),
+  locked: boolean().notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const workSessions = pgTable("work_sessions", {
+  id: serial().primaryKey(),
+  userId: integer("user_id").references(() => users.id),
+  sopId: integer("sop_id")
+    .notNull()
+    .references(() => sops.id),
+  cameraId: integer("camera_id")
+    .notNull()
+    .references(() => cameras.id),
+  detailCameraId: integer("detail_camera_id").references(() => cameras.id),
+  analysisId: integer("analysis_id").references(() => analyses.id),
+  mode: varchar({ length: 32 }).notNull().default("sequential"),
+  status: varchar({ length: 32 }).notNull().default("live"),
+  waveIndex: integer("wave_index").notNull().default(1),
+  groupKey: varchar("group_key", { length: 190 }).notNull(),
+  currentStepOrder: integer("current_step_order").notNull().default(0),
+  suggestedStepOrder: integer("suggested_step_order"),
+  title: varchar({ length: 255 }).notNull(),
+  workerToken: varchar("worker_token", { length: 64 }).notNull().unique(),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+});
+
+export const sessionEvents = pgTable("session_events", {
+  id: serial().primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => workSessions.id, { onDelete: "cascade" }),
+  kind: varchar({ length: 32 }).notNull(),
+  stepOrder: integer("step_order"),
+  actor: varchar({ length: 32 }).notNull().default("supervisor"),
+  message: text(),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const analyses = pgTable("analyses", {
@@ -82,6 +134,10 @@ export const analyses = pgTable("analyses", {
   progressUpdatedAt: timestamp("progress_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
+  sessionId: integer("session_id"),
+  waveIndex: integer("wave_index"),
+  cameraId: integer("camera_id"),
+  workMode: varchar("work_mode", { length: 32 }),
 });
 
 export const analysisFrames = pgTable("analysis_frames", {
@@ -92,6 +148,7 @@ export const analysisFrames = pgTable("analysis_frames", {
   frameIndex: integer("frame_index").notNull(),
   timestampSec: real("timestamp_sec").notNull(),
   blobKey: varchar("blob_key", { length: 600 }).notNull(),
+  cameraRole: varchar("camera_role", { length: 32 }).notNull().default("any"),
 });
 
 export const analysisItemResults = pgTable("analysis_item_results", {
@@ -138,3 +195,6 @@ export type Analysis = typeof analyses.$inferSelect;
 export type AnalysisFrame = typeof analysisFrames.$inferSelect;
 export type AnalysisItemResult = typeof analysisItemResults.$inferSelect;
 export type AppSettings = typeof appSettings.$inferSelect;
+export type Camera = typeof cameras.$inferSelect;
+export type WorkSession = typeof workSessions.$inferSelect;
+export type SessionEvent = typeof sessionEvents.$inferSelect;

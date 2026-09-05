@@ -1,3 +1,4 @@
+import { inferCheckItemAttrs } from "./check-item";
 import type { ParsedSop } from "./json";
 
 function splitBlocks(text: string): string[] {
@@ -37,6 +38,13 @@ export function heuristicParseSop(text: string, filename: string): ParsedSop {
       passCriteria: actions[0] || "画面中可观察到该步骤的关键动作",
       riskHint: /禁止|不得|危险|注意/.test(block) ? "注意手册中的禁止项与安全提示" : "",
       category: index === 0 ? "准备" : "操作",
+      ...inferCheckItemAttrs({
+        title: stepTitle,
+        description: body || lines.join("\n"),
+        category: index === 0 ? "准备" : "操作",
+        riskHint: /禁止|不得|危险|注意/.test(block) ? "注意手册中的禁止项与安全提示" : "",
+        keyActions: actions.length ? actions : lines.slice(0, 3),
+      }),
     };
   });
   return {
@@ -51,6 +59,7 @@ export function heuristicParseSop(text: string, filename: string): ParsedSop {
         passCriteria: "视频覆盖手册要求的主要动作",
         riskHint: "",
         category: "综合",
+        ...inferCheckItemAttrs({ title, description: text.slice(0, 800), category: "综合" }),
       },
     ],
   };

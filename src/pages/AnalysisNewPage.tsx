@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Breadcrumb } from "../components/Breadcrumb";
 import { FileDrop } from "../components/FileDrop";
 import { ModelSelect } from "../components/ModelSelect";
 import { api, getSettings, listSops, type Settings, type Sop } from "../lib/api";
@@ -131,9 +130,8 @@ export function AnalysisNewPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
-      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "履职分析", to: "/analyses" }, { label: "新建分析" }]} />
       <div>
-        <h1 className="text-2xl font-semibold text-ink">新建履职分析</h1>
+        <h1 className="text-2xl font-semibold text-ink">回放核验</h1>
         <p className="mt-1 text-sm text-slate-500">可上传作业视频（按间隔抽帧）或一张/多张现场照片，全部对照 SOP 各步骤检测。</p>
       </div>
       <div className="flex rounded-xl bg-white p-1 ring-1 ring-slate-200">

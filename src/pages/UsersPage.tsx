@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { createUser, listUsers, patchUser } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { Modal } from "../components/Modal";
+import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/Skeleton";
 
-export function UsersPage() {
+export function UsersPage({ embedded = false }: { embedded?: boolean }) {
   const [rows, setRows] = useState<Array<{
     id: number;
     username: string;
@@ -47,7 +48,7 @@ export function UsersPage() {
     <div className="space-y-5">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
+          <h1 className={embedded ? "text-lg font-semibold text-ink" : "text-2xl font-semibold text-ink"}>用户管理</h1>
           <p className="mt-1 text-sm text-slate-500">系统仅有一名超级管理员。普通用户只能看到自己上传的手册与分析。</p>
         </div>
         <button type="button" onClick={() => setOpen(true)} className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
@@ -56,6 +57,10 @@ export function UsersPage() {
       </div>
       {error && <p className="text-sm text-rose-600">{error}</p>}
       {!rows && !error && <PageSkeleton variant="table" />}
+      {rows && rows.length === 0 && (
+        <EmptyState title="暂无用户" description="还没有普通用户。可新建账号，对方只能看到自己的手册与报告。" />
+      )}
+      {rows && rows.length > 0 && (
       <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-slate-500">
@@ -93,6 +98,7 @@ export function UsersPage() {
           </tbody>
         </table>
       </div>
+      )}
       <Modal open={open} title="新建普通用户" onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <input

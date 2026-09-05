@@ -19,6 +19,7 @@ export const verdictLabel: Record<string, string> = {
   uncertain: "存疑",
   not_observed: "未观察到",
   skipped: "已跳过",
+  not_applicable: "不适用",
 };
 
 export const statusLabel: Record<string, string> = {
@@ -29,6 +30,8 @@ export const statusLabel: Record<string, string> = {
   uploading: "抽帧上传中",
   analyzing: "分析中",
   completed: "已完成",
+  live: "进行中",
+  watching: "场间值守",
 };
 
 export const resultLabel: Record<string, string> = {

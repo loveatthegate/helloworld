@@ -56,6 +56,15 @@ export type Sop = {
   analyzingCount?: number;
 };
 
+export type ItemResult = {
+  id: number;
+  verdict: string;
+  confidence: number | null;
+  reasoning: string | null;
+  evidenceFrameIds: number[] | null;
+  observedAtSec: number | null;
+};
+
 export type CheckItem = {
   id: number;
   sopId: number;
@@ -66,6 +75,50 @@ export type CheckItem = {
   passCriteria: string | null;
   riskHint: string | null;
   category: string | null;
+  scope?: "throughout" | "step" | "after_event" | string;
+  judgeType?: string;
+  missingEvidence?: string;
+  evidenceFrom?: string;
+  segmentSource?: string;
+  result?: ItemResult | null;
+  phase?: "pending" | "current" | "done" | "throughout" | "waiting";
+};
+
+export type Camera = {
+  id: number;
+  name: string;
+  rtspUrl?: string | null;
+  previewUrl?: string | null;
+  locked?: boolean;
+  role: "global" | "detail" | string;
+  mount: "fixed" | "mobile" | string;
+};
+
+export type WorkSession = {
+  id: number;
+  sopId: number;
+  cameraId: number;
+  detailCameraId?: number | null;
+  analysisId?: number | null;
+  mode: string;
+  status: string;
+  waveIndex: number;
+  groupKey: string;
+  currentStepOrder: number;
+  suggestedStepOrder?: number | null;
+  title: string;
+  workerToken: string;
+  workerPath?: string;
+  startedAt?: string;
+  endedAt?: string | null;
+  cameraName?: string;
+  sop?: Sop;
+  camera?: Camera | null;
+  detailCamera?: Camera | null;
+  items?: CheckItem[];
+  frames?: Frame[];
+  alerts?: Array<{ id: number; message?: string | null; createdAt?: string }>;
+  events?: Array<{ id: number; kind: string; stepOrder?: number | null; message?: string | null; actor?: string }>;
 };
 
 export type Analysis = {
@@ -96,6 +149,10 @@ export type Analysis = {
   progressMessage?: string | null;
   progressUpdatedAt?: string | null;
   stalled?: boolean;
+  sessionId?: number | null;
+  waveIndex?: number | null;
+  cameraId?: number | null;
+  workMode?: string | null;
 };
 
 export type Frame = {
@@ -107,22 +164,18 @@ export type Frame = {
   url: string;
 };
 
-export type ItemResult = {
-  id: number;
-  verdict: string;
-  confidence: number | null;
-  reasoning: string | null;
-  evidenceFrameIds: number[] | null;
-  observedAtSec: number | null;
-};
-
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     credentials: "include",
     headers: init?.body instanceof FormData ? init.headers : { ...(init?.headers || {}) },
   });
-  if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/me")) {
+  if (
+    res.status === 401 &&
+    !path.startsWith("/api/login") &&
+    !path.startsWith("/api/me") &&
+    !path.startsWith("/api/work")
+  ) {
     if (!window.location.pathname.startsWith("/login")) {
       window.location.href = "/login";
     }
@@ -203,8 +256,77 @@ export const getDashboard = () =>
     analyses: number;
     analysesCompleted: number;
     recent: Analysis[];
+    liveSessions?: WorkSession[];
     vlm: VlmStatus;
   }>("/api/dashboard");
+
+export const touchDemoStream = () => api<{ ok: boolean }>("/api/demo-stream/touch", { method: "POST" });
+
+export const listCameras = () => api<Camera[]>("/api/cameras");
+export const createCamera = (body: Partial<Camera> & { name: string }) =>
+  api<Camera>("/api/cameras", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const patchCamera = (id: number, body: Partial<Camera>) =>
+  api<Camera>(`/api/cameras/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const deleteCamera = (id: number) => api<{ ok: boolean }>(`/api/cameras/${id}`, { method: "DELETE" });
+
+export const listLiveSessions = () => api<WorkSession[]>("/api/live/sessions");
+export const createLiveSession = (body: { sopId: number; cameraId: number; detailCameraId?: number; mode: string }) =>
+  api<WorkSession>("/api/live/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const getLiveSession = (id: number) => api<WorkSession>(`/api/live/sessions/${id}`);
+export const confirmLiveStep = (id: number, stepOrder?: number) =>
+  api<WorkSession>(`/api/live/sessions/${id}/confirm-step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stepOrder }),
+  });
+export const dismissLiveSuggest = (id: number) =>
+  api<WorkSession>(`/api/live/sessions/${id}/dismiss-suggest`, { method: "POST" });
+export const endLiveSession = (id: number) =>
+  api<{ session: WorkSession; analysis: Analysis | null; watch: WorkSession | null }>(`/api/live/sessions/${id}/end`, {
+    method: "POST",
+  });
+export const nextLiveSession = (id: number) =>
+  api<WorkSession>(`/api/live/sessions/${id}/next`, { method: "POST" });
+export const uploadLiveFrame = (id: number, body: { dataBase64: string; timestampSec?: number; cameraRole?: string }) =>
+  api<{ ok: boolean }>(`/api/live/sessions/${id}/frames`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+export const suggestLiveStep = (id: number, stepOrder: number) =>
+  api<WorkSession>(`/api/live/sessions/${id}/suggest-step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stepOrder }),
+  });
+
+export const getWorkSession = (token: string) => api<WorkSession>(`/api/work/${token}`);
+export const workConfirmStep = (token: string, stepOrder?: number) =>
+  api<WorkSession>(`/api/work/${token}/confirm-step`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stepOrder }),
+  });
+export const workEndSession = (token: string) => api<WorkSession>(`/api/work/${token}/end`, { method: "POST" });
+
+export const patchCheckItem = (sopId: number, itemId: number, body: Partial<CheckItem>) =>
+  api<CheckItem>(`/api/sops/${sopId}/items/${itemId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 export const listSops = () => api<Sop[]>("/api/sops");
 export const getSop = (id: number) => api<Sop & { items: CheckItem[] }>(`/api/sops/${id}`);

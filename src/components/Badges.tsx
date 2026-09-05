@@ -8,6 +8,8 @@ const statusClass: Record<string, string> = {
   uploading: "bg-sky-50 text-sky-800",
   uploaded: "bg-slate-100 text-slate-700",
   failed: "bg-rose-50 text-rose-800",
+  live: "bg-sky-50 text-sky-800",
+  watching: "bg-violet-50 text-violet-800",
 };
 
 const verdictClass: Record<string, string> = {
@@ -16,6 +18,7 @@ const verdictClass: Record<string, string> = {
   uncertain: "bg-amber-500 text-white",
   not_observed: "bg-slate-500 text-white",
   skipped: "bg-slate-300 text-slate-700",
+  not_applicable: "bg-slate-300 text-slate-700",
 };
 
 const resultClass: Record<string, string> = {

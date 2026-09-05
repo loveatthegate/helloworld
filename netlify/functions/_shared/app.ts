@@ -25,6 +25,7 @@ import {
 } from "./auth";
 import { hashPassword, verifyPassword } from "./password";
 import { ALLOWED_INTERVALS, DEFAULT_BRANDING, getSettingsRow, normalizeInterval, publicBranding } from "./settings";
+import { registerLiveRoutes } from "./live";
 
 type Env = { Variables: { user: AuthUser } };
 const app = new Hono<Env>().basePath("/api");
@@ -54,7 +55,11 @@ function isPublicApiPath(path: string) {
     normalized === "/api/health" ||
     normalized === "/api/branding" ||
     normalized === "/api/branding/logo" ||
-    normalized === "/api/branding/login-image"
+    normalized === "/api/branding/login-image" ||
+    normalized === "/work" ||
+    normalized.startsWith("/work/") ||
+    normalized === "/api/work" ||
+    normalized.startsWith("/api/work/")
   );
 }
 
@@ -653,13 +658,17 @@ app.get("/dashboard", async (c) => {
   const recentQuery = analysisOwned
     ? db.select().from(schema.analyses).where(analysisOwned).orderBy(desc(schema.analyses.createdAt)).limit(6)
     : db.select().from(schema.analyses).orderBy(desc(schema.analyses.createdAt)).limit(6);
-  const [[sopCount], [readyCount], [analysisCount], [completedCount], recent, vlm] = await Promise.all([
+  const liveWhere = isAdmin(user)
+    ? inArray(schema.workSessions.status, ["live", "watching"])
+    : and(eq(schema.workSessions.userId, user.id), inArray(schema.workSessions.status, ["live", "watching"]));
+  const [[sopCount], [readyCount], [analysisCount], [completedCount], recent, vlm, liveSessions] = await Promise.all([
     sopCountQuery,
     db.select({ total: count() }).from(schema.sops).where(readyWhere),
     analysisCountQuery,
     db.select({ total: count() }).from(schema.analyses).where(completedWhere),
     recentQuery,
     getVlmStatus(),
+    db.select().from(schema.workSessions).where(liveWhere).orderBy(desc(schema.workSessions.startedAt)).limit(8),
   ]);
   return c.json({
     sops: Number(sopCount.total),
@@ -667,6 +676,7 @@ app.get("/dashboard", async (c) => {
     analyses: Number(analysisCount.total),
     analysesCompleted: Number(completedCount.total),
     recent: recent.map((row) => sanitizeAnalysis(user, row)),
+    liveSessions,
     vlm: isAdmin(user) ? vlm : { ready: vlm.ready },
   });
 });
@@ -935,6 +945,10 @@ app.delete("/analyses/:id", async (c) => {
   const frames = await db.select().from(schema.analysisFrames).where(eq(schema.analysisFrames.analysisId, analysis.id));
   for (const frame of frames) await deleteBlob(frame.blobKey);
   if (analysis.videoBlobKey) await deleteBlob(analysis.videoBlobKey);
+  await db
+    .update(schema.workSessions)
+    .set({ analysisId: null })
+    .where(eq(schema.workSessions.analysisId, analysis.id));
   await db.delete(schema.analyses).where(eq(schema.analyses.id, analysis.id));
   return c.json({ ok: true });
 });
@@ -978,5 +992,7 @@ app.get("/analyses/:id", async (c) => {
     }),
   });
 });
+
+registerLiveRoutes(app);
 
 export { app };

@@ -4,7 +4,7 @@ import { api, getAnalysis, skipAnalysisItem } from "../lib/api";
 import { formatDate, formatTime, verdictLabel } from "../lib/format";
 import { ResultText, StatusBadge, VerdictBadge } from "../components/Badges";
 import { Lightbox } from "../components/Lightbox";
-import { Breadcrumb } from "../components/Breadcrumb";
+import { usePageCrumbs } from "../components/Breadcrumb";
 import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
@@ -16,6 +16,16 @@ export function AnalysisDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [skipping, setSkipping] = useState<number | null>(null);
+
+  usePageCrumbs(
+    data
+      ? [
+          { label: "工作台", to: "/" },
+          { label: "核验报告", to: "/analyses" },
+          { label: data.title },
+        ]
+      : null,
+  );
 
   const refresh = () =>
     getAnalysis(analysisId)
@@ -58,13 +68,6 @@ export function AnalysisDetailPage() {
   return (
     <div className="space-y-6">
       {preview && <Lightbox src={preview} onClose={() => setPreview(null)} />}
-      <Breadcrumb
-        items={[
-          { label: "工作台", to: "/" },
-          { label: "履职分析", to: "/analyses" },
-          { label: data.title },
-        ]}
-      />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -86,7 +89,15 @@ export function AnalysisDetailPage() {
                 </Link>
               )}
             </span>
-            <span>{data.sourceType === "images" ? "现场照片" : "作业视频"}</span>
+            <span>
+              {data.sourceType === "images" ? "现场照片" : data.sourceType === "rtsp" ? "实时核验" : "作业视频"}
+            </span>
+            {data.waveIndex ? <span>第 {data.waveIndex} 波（单独计满足率）</span> : null}
+            {data.sessionId ? (
+              <Link className="text-teal" to={`/live/${data.sessionId}`}>
+                返回场次
+              </Link>
+            ) : null}
             {isAdmin && data.modelUsed && <span>模型 {data.modelUsed}</span>}
             {data.sourceType !== "images" && <span>抽帧每 {data.frameIntervalSec}s</span>}
             <span>{data.frames.length} 张画面</span>

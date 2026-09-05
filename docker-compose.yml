@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    environment:
+      LVZHI_VITE_API: "1"
+      LVZHI_VLM_API_KEY: ${LVZHI_VLM_API_KEY:-}
+      LVZHI_VLM_BASE_URL: ${LVZHI_VLM_BASE_URL:-}
+      DEMO_RTSP_URL: rtsp://mediamtx:8554/demo
+    volumes:
+      - .:/app
+      - lvzhi_node_modules:/app/node_modules
+      - lvzhi_data:/app/.data
+    depends_on:
+      - mediamtx
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+  mediamtx:
+    image: docker.m.daocloud.io/bluenviron/mediamtx:1
+    ports:
+      - "8554:8554"
+
+volumes:
+  lvzhi_node_modules:
+  lvzhi_data:

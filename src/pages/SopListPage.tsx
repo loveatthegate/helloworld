@@ -3,8 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { deleteSop, listSops, type Sop } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { StatusBadge } from "../components/Badges";
-import { Breadcrumb } from "../components/Breadcrumb";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
@@ -24,10 +24,9 @@ export function SopListPage() {
 
   return (
     <div className="space-y-5">
-      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "SOP 手册" }]} />
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">SOP 手册</h1>
+          <h1 className="text-2xl font-semibold text-ink">SOP手册</h1>
           <p className="mt-1 text-sm text-slate-500">上传作业指导书，解析为可视化检查项后再做视频比对。</p>
         </div>
         <Link to="/sops/new" className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
@@ -37,9 +36,15 @@ export function SopListPage() {
       {error && <p className="text-rose-600">{error}</p>}
       {!rows && !error && <PageSkeleton variant="books" />}
       {rows && rows.length === 0 && (
-        <div className="rounded-2xl bg-white p-10 text-center text-slate-500 ring-1 ring-slate-200">
-          还没有手册。可以上传 PDF、Word、图片或 Markdown。
-        </div>
+        <EmptyState
+          title="暂无手册"
+          description="上传 PDF、Word、图片或 Markdown，解析为可视化检查项后再做核验。"
+          action={
+            <Link to="/sops/new" className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
+              上传手册
+            </Link>
+          }
+        />
       )}
       <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
         {rows?.map((sop) => (
