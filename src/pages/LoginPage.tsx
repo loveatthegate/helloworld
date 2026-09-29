@@ -66,7 +66,7 @@ export function LoginPage() {
 
   return (
     <div
-      className="flex h-full min-h-full items-center justify-center px-4"
+      className="relative flex h-full min-h-full items-center justify-center px-4 pb-12"
       style={{
         background: branding.loginImageUrl
           ? `linear-gradient(rgba(15,39,68,0.45), rgba(15,39,68,0.45)), url(${branding.loginImageUrl}) center/cover`
@@ -116,10 +116,12 @@ export function LoginPage() {
             >
               {busy ? "登录中…" : "登录"}
             </button>
-            <p className="mt-4 text-center text-xs text-slate-400">{branding.copyright}</p>
           </>
         )}
       </div>
+      <footer className={`absolute bottom-0 left-0 px-5 py-4 text-xs ${branding.loginImageUrl ? "text-white/80" : "text-slate-400"}`}>
+        {branding.copyright}
+      </footer>
     </div>
   );
 }

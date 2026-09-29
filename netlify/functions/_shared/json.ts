@@ -24,6 +24,12 @@ export const parsedSopSchema = z.object({
         passCriteria: z.string().optional().default(""),
         riskHint: z.string().optional().default(""),
         category: z.string().optional().default(""),
+        scope: z.enum(["throughout", "step", "after_event"]).optional(),
+        judgeType: z
+          .enum(["presence", "action", "order", "duration", "count", "coverage", "prohibition"])
+          .optional(),
+        missingEvidence: z.enum(["not_observed", "not_applicable"]).optional(),
+        evidenceFrom: z.enum(["global", "detail", "any"]).optional(),
       }),
     )
     .min(1),

@@ -9,3 +9,6 @@ dist
 .DS_Store
 *.tsbuildinfo
 .vite
+.cache
+public/maps/*.pmtiles
+public/maps/.last-fetch.txt

@@ -13,7 +13,7 @@ const ANALYZE_CONCURRENCY = 2;
 const ANALYZE_TIMEOUT_MS = 75_000;
 
 function overallFromVerdicts(verdicts: string[]): "pass" | "fail" | "partial" {
-  const meaningful = verdicts.filter((v) => v !== "skipped");
+  const meaningful = verdicts.filter((v) => v !== "skipped" && v !== "not_applicable");
   if (meaningful.some((v) => v === "fail")) return "fail";
   if (meaningful.length > 0 && meaningful.every((v) => v === "pass")) return "pass";
   return "partial";

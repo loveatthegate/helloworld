@@ -3,6 +3,7 @@ import { getDb, schema } from "../../../db/index";
 import { getBlob } from "./blobs";
 import { extractSopContent } from "./extract";
 import { heuristicParseSop } from "./heuristic";
+import { inferCheckItemAttrs } from "./check-item";
 import { parseSopJson, type ParsedSop } from "./json";
 import { generateVlmText, getVlmStatus } from "./vlm";
 import { getModel } from "./models";
@@ -12,7 +13,8 @@ const PARSE_PROMPT = `你是工业/现场作业 SOP 结构化助手。请阅读�
 要求：
 1. 只依据原文，不要编造手册中没有的步骤。
 2. 每个步骤要能被视频画面核验（动作、顺序、防护、确认点）。
-3. 必须返回 JSON 对象，不要 Markdown 解释。
+3. 区分「全程约束」与「有序步骤」：全程佩戴、监护在场、禁止抽烟等不要写成第 1 步，scope 用 throughout；按顺序做的操作 scope 用 step。
+4. 必须返回 JSON 对象，不要 Markdown 解释。
 
 JSON 形状：
 {
@@ -26,7 +28,9 @@ JSON 形状：
       "keyActions": ["可观察的动作1", "动作2"],
       "passCriteria": "判定合格的画面标准",
       "riskHint": "违规/安全风险，可空字符串",
-      "category": "准备|操作|确认|收尾"
+      "category": "准备|操作|确认|收尾",
+      "scope": "throughout|step|after_event",
+      "judgeType": "presence|action|order|duration|count|coverage|prohibition"
     }
   ]
 }`;
@@ -81,16 +85,24 @@ export async function parseSopJob(sopId: number): Promise<void> {
     await db.delete(schema.sopCheckItems).where(eq(schema.sopCheckItems.sopId, sopId));
     if (parsed.steps.length) {
       await db.insert(schema.sopCheckItems).values(
-        parsed.steps.map((step, index) => ({
-          sopId,
-          stepOrder: step.order ?? index + 1,
-          title: step.title.slice(0, 255),
-          description: step.description,
-          keyActions: step.keyActions ?? [],
-          passCriteria: step.passCriteria,
-          riskHint: step.riskHint,
-          category: step.category || null,
-        })),
+        parsed.steps.map((step, index) => {
+          const inferred = inferCheckItemAttrs(step);
+          return {
+            sopId,
+            stepOrder: step.order ?? index + 1,
+            title: step.title.slice(0, 255),
+            description: step.description,
+            keyActions: step.keyActions ?? [],
+            passCriteria: step.passCriteria,
+            riskHint: step.riskHint,
+            category: step.category || null,
+            scope: step.scope || inferred.scope,
+            judgeType: step.judgeType || inferred.judgeType,
+            missingEvidence: inferred.missingEvidence,
+            evidenceFrom: inferred.evidenceFrom,
+            segmentSource: inferred.segmentSource,
+          };
+        }),
       );
     }
 

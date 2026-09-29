@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   getSettings,
   resetAppearance,
@@ -11,7 +12,17 @@ import {
 } from "../lib/api";
 import { ModelSelect } from "../components/ModelSelect";
 import { PageSkeleton } from "../components/Skeleton";
+import { useAuth } from "../lib/auth";
 import { useBranding } from "../lib/branding";
+import { CamerasPage } from "./CamerasPage";
+import { UsersPage } from "./UsersPage";
+
+const TABS = [
+  { id: "cameras", label: "点位管理", adminOnly: false },
+  { id: "users", label: "用户管理", adminOnly: true },
+  { id: "model", label: "模型设置", adminOnly: true },
+  { id: "appearance", label: "外观设置", adminOnly: true },
+] as const;
 
 function ImageField({
   label,
@@ -53,8 +64,12 @@ function ImageField({
 }
 
 export function SettingsPage() {
+  const { isAdmin } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const tabs = TABS.filter((item) => !item.adminOnly || isAdmin);
+  const requested = params.get("tab") || (isAdmin ? "cameras" : "cameras");
+  const tab = tabs.some((item) => item.id === requested) ? requested : "cameras";
   const { refresh } = useBranding();
-  const [tab, setTab] = useState<"model" | "appearance">("model");
   const [settings, setSettings] = useState<Settings | null>(null);
   const [appearance, setAppearance] = useState<Branding | null>(null);
   const [saved, setSaved] = useState(false);
@@ -63,13 +78,14 @@ export function SettingsPage() {
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
+    if (!isAdmin) return;
     getSettings()
       .then((s) => {
         setSettings(s);
         setAppearance(s.appearance);
       })
       .catch((e: Error) => setError(e.message));
-  }, []);
+  }, [isAdmin]);
 
   const persistModel = async () => {
     if (!settings) return null;
@@ -120,33 +136,33 @@ export function SettingsPage() {
     }
   };
 
-  if (!settings && !error) return <PageSkeleton variant="form" />;
-  if (!settings || !appearance) return <p className="text-rose-600">{error}</p>;
+  if (isAdmin && (tab === "model" || tab === "appearance") && !settings && !error) return <PageSkeleton variant="form" />;
+  if (isAdmin && (tab === "model" || tab === "appearance") && error && (!settings || !appearance)) {
+    return <p className="text-rose-600">{error}</p>;
+  }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
+    <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold text-ink">系统设置</h1>
-        <p className="mt-1 text-sm text-slate-500">模型密钥由系统预置。外观设置会作用于登录页和导航栏。</p>
+        <p className="mt-1 text-sm text-slate-500">点位、用户、模型与外观集中管理。模型密钥由系统预置。</p>
       </div>
-      <div className="flex rounded-xl bg-white p-1 ring-1 ring-slate-200">
-        <button
-          type="button"
-          onClick={() => setTab("model")}
-          className={`flex-1 rounded-lg py-2 text-sm ${tab === "model" ? "bg-ink text-white" : "text-slate-600"}`}
-        >
-          模型设置
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("appearance")}
-          className={`flex-1 rounded-lg py-2 text-sm ${tab === "appearance" ? "bg-ink text-white" : "text-slate-600"}`}
-        >
-          外观设置
-        </button>
+      <div className="flex flex-wrap gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setParams({ tab: item.id })}
+            className={`rounded-lg px-4 py-2 text-sm ${tab === item.id ? "bg-ink text-white" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
-      {tab === "model" ? (
+      {tab === "cameras" && <CamerasPage embedded />}
+      {tab === "users" && isAdmin && <UsersPage embedded />}
+      {tab === "model" && isAdmin && settings && (
         <>
           <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
             <div className="text-sm text-slate-500">当前模型</div>
@@ -203,7 +219,8 @@ export function SettingsPage() {
             </button>
           </div>
         </>
-      ) : (
+      )}
+      {tab === "appearance" && isAdmin && appearance && (
         <>
           <div className="grid gap-4 rounded-2xl bg-white p-5 ring-1 ring-slate-200">
             <label className="text-sm">

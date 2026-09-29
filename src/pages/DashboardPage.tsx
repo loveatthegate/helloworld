@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookOpen, ClipboardCheck, FileCheck, Plus, ShieldCheck } from "lucide-react";
-import { getDashboard, type Analysis, type VlmStatus } from "../lib/api";
+import { BookOpen, ClipboardCheck, FileVideo, Plus, Radio, ShieldCheck } from "lucide-react";
+import { getDashboard, type Analysis, type VlmStatus, type WorkSession } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { ResultText, StatusBadge } from "../components/Badges";
+import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/Skeleton";
 import { useAuth } from "../lib/auth";
 
@@ -35,8 +36,8 @@ export function DashboardPage() {
   if (!data) return <PageSkeleton variant="dashboard" />;
 
   const cards = [
-    { label: "SOP 手册", value: data.sops, extra: `${data.sopsReady} 份已解析`, icon: BookOpen, to: "/sops" },
-    { label: "分析任务", value: data.analyses, extra: `${data.analysesCompleted} 份已出报告`, icon: ClipboardCheck, to: "/analyses" },
+    { label: "SOP手册", value: data.sops, extra: `${data.sopsReady} 份已解析`, icon: BookOpen, to: "/sops" },
+    { label: "核验报告", value: data.analyses, extra: `${data.analysesCompleted} 份已出报告`, icon: ClipboardCheck, to: "/analyses" },
   ];
 
   return (
@@ -48,20 +49,48 @@ export function DashboardPage() {
           </div>
           <div>
             <h1 className="text-2xl font-semibold text-ink">工作台</h1>
-            <p className="mt-1 text-sm text-slate-500">上传手册与作业视频，用视觉模型核验是否按 SOP 履职。</p>
+            <p className="mt-1 text-sm text-slate-500">回放视频对照手册，或实时核验 RTSP 作业。</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <Link to="/sops/new" className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
-            <Plus size={16} /> 上传 SOP
+          <Link to="/analyses/new" className="inline-flex items-center gap-2 rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2">
+            <FileVideo size={16} /> 回放核验
           </Link>
-          <Link to="/analyses/new" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">
-            <FileCheck size={16} /> 履职分析
+          <Link to="/live/new" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">
+            <Radio size={16} /> 实时核验
+          </Link>
+          <Link to="/sops/new" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50">
+            <Plus size={16} /> 上传手册
           </Link>
         </div>
       </div>
 
       {isAdmin && <VlmBanner vlm={data.vlm} />}
+
+      {(data.liveSessions?.length ?? 0) > 0 && (
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <h2 className="mb-3 inline-flex items-center gap-2 font-medium">
+            <Radio size={18} className="text-teal" /> 进行中的场次
+          </h2>
+          <ul className="divide-y divide-slate-100">
+            {data.liveSessions!.map((row: WorkSession) => (
+              <li key={row.id} className="flex items-center justify-between py-2">
+                <div>
+                  <Link to={`/live/${row.id}`} className="font-medium text-ink hover:text-teal">
+                    {row.title}
+                  </Link>
+                  <div className="text-xs text-slate-500">
+                    第 {row.waveIndex} 波 · {row.status === "watching" ? "场间值守" : "进行中"}
+                  </div>
+                </div>
+                <Link to={`/live/${row.id}`} className="text-sm text-teal">
+                  进入监督墙
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => (
@@ -86,13 +115,17 @@ export function DashboardPage() {
           </Link>
         </div>
         {data.recent.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-slate-500">
-            <ClipboardCheck />
-            <p>还没有分析任务。先上传一份 SOP，再提交作业视频。</p>
-            <Link to="/sops" className="text-teal inline-flex items-center gap-1 text-sm">
-              <BookOpen size={14} /> 前往手册库
-            </Link>
-          </div>
+          <EmptyState
+            compact
+            flush
+            title="暂无报告"
+            description="先上传一份 SOP 手册，再回放视频或开实时核验。"
+            action={
+              <Link to="/sops" className="inline-flex items-center gap-1 text-sm text-teal">
+                <BookOpen size={14} /> 前往手册库
+              </Link>
+            }
+          />
         ) : (
           <ul className="divide-y divide-slate-100">
             {data.recent.map((row: Analysis) => (

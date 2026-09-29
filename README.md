@@ -37,6 +37,16 @@ npm run dev
 
 长任务使用 `parse-sop-background` 与 `analyze-video-background`（最长 15 分钟）。同步函数 60 秒不够完成多帧视觉分析。
 
+## 地图 Demo
+
+`/map` 只覆盖外滩附近约 3–4 km（WGS84：121.47–121.52E，31.22–31.25N）。矢量来自 OpenStreetMap（ODbL，Protomaps 裁切）；卫星优先本地 Sentinel-2（Copernicus），没有 `public/maps/*.pmtiles` 时回退 OSM 栅格 + Esri World Imagery。
+
+```bash
+npm run maps:fetch
+```
+
+大 PMTiles 不进 git。无坐标的点位不上图。国标 GB28181 仅预留字段，本期不接入。
+
 ## 抽帧说明
 
 工作视频通常大于 Functions 6MB 限制，因此抽帧在浏览器完成，只上传 JPEG 证据帧。小于 5.5MB 的视频会额外存档便于回溯。

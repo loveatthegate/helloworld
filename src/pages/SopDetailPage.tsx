@@ -1,15 +1,47 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getSop, getSettings, reparseSop, type CheckItem, type Sop } from "../lib/api";
+import { getSop, getSettings, patchCheckItem, reparseSop, type CheckItem, type Sop } from "../lib/api";
 import { formatDate } from "../lib/format";
-import { Breadcrumb } from "../components/Breadcrumb";
+import { usePageCrumbs } from "../components/Breadcrumb";
+import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/Badges";
 import { ModelSelect } from "../components/ModelSelect";
 import { useAuth } from "../lib/auth";
 
-function CheckCard({ item }: { item: CheckItem }) {
+const SCOPE_HINT: Record<string, string> = {
+  throughout: "整场都盯这项，不跟某一步绑定。",
+  step: "只在对应步骤的时间窗里判定。",
+  after_event: "只有发生指定事件后才检查。",
+};
+
+const JUDGE_HINT: Record<string, string> = {
+  presence: "看某个状态在不在，例如戴帽、有人监护。",
+  action: "看有没有做出这个动作。",
+  order: "看先后顺序对不对。",
+  duration: "看是否持续够规定时间。",
+  count: "看次数够不够。",
+  coverage: "看该去的点位是否都走到、拍到。",
+  prohibition: "盯不该出现的行为，出现即告警。",
+};
+
+const MISSING_HINT: Record<string, string> = {
+  not_observed: "没拍到就记未观察到，不记成做错。",
+  not_applicable: "这路机本来拍不到，跳过且不判失败。",
+};
+
+const EVIDENCE_HINT: Record<string, string> = {
+  any: "全局机或细节机，有一路能看清即可。",
+  global: "只认主点位/全局画面里的证据。",
+  detail: "只认细节机近景，全局机不算。",
+};
+
+function CheckCard({ item, sopId, canEdit, onSaved }: { item: CheckItem; sopId: number; canEdit: boolean; onSaved: () => void }) {
   const [open, setOpen] = useState(item.stepOrder <= 2);
+  const [scope, setScope] = useState(item.scope || "step");
+  const [judgeType, setJudgeType] = useState(item.judgeType || "action");
+  const [missingEvidence, setMissingEvidence] = useState(item.missingEvidence || "not_observed");
+  const [evidenceFrom, setEvidenceFrom] = useState(item.evidenceFrom || "any");
   const actions = Array.isArray(item.keyActions) ? item.keyActions : [];
   return (
     <article className="relative rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -18,9 +50,10 @@ function CheckCard({ item }: { item: CheckItem }) {
       </div>
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-left">
         <div>
-          {item.category && (
-            <div className="mb-1 text-xs uppercase tracking-wide text-teal">{item.category}</div>
-          )}
+          <div className="mb-1 flex flex-wrap gap-2 text-xs text-teal">
+            {item.category && <span>{item.category}</span>}
+            <span>{item.scope === "throughout" ? "全程" : item.scope === "after_event" ? "事件后" : "分步"}</span>
+          </div>
           <h3 className="font-medium text-ink">{item.title}</h3>
         </div>
         <span className="text-xs text-slate-400">{open ? "收起" : "展开"}</span>
@@ -49,6 +82,77 @@ function CheckCard({ item }: { item: CheckItem }) {
           {item.riskHint && (
             <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">风险提示：{item.riskHint}</div>
           )}
+          {canEdit && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs text-slate-400">
+                作用域
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-ink"
+                  value={scope}
+                  onChange={(e) => {
+                    setScope(e.target.value);
+                    void patchCheckItem(sopId, item.id, { scope: e.target.value }).then(onSaved);
+                  }}
+                >
+                  <option value="throughout">全程</option>
+                  <option value="step">分步</option>
+                  <option value="after_event">事件后</option>
+                </select>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">{SCOPE_HINT[scope]}</p>
+              </label>
+              <label className="text-xs text-slate-400">
+                判定
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-ink"
+                  value={judgeType}
+                  onChange={(e) => {
+                    setJudgeType(e.target.value);
+                    void patchCheckItem(sopId, item.id, { judgeType: e.target.value }).then(onSaved);
+                  }}
+                >
+                  <option value="presence">状态有无</option>
+                  <option value="action">动作发生</option>
+                  <option value="order">顺序</option>
+                  <option value="duration">持续时长</option>
+                  <option value="count">次数</option>
+                  <option value="coverage">点位覆盖</option>
+                  <option value="prohibition">负向禁则</option>
+                </select>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">{JUDGE_HINT[judgeType]}</p>
+              </label>
+              <label className="text-xs text-slate-400">
+                缺画面
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-ink"
+                  value={missingEvidence}
+                  onChange={(e) => {
+                    setMissingEvidence(e.target.value);
+                    void patchCheckItem(sopId, item.id, { missingEvidence: e.target.value }).then(onSaved);
+                  }}
+                >
+                  <option value="not_observed">未观察到</option>
+                  <option value="not_applicable">不适用（不判失败）</option>
+                </select>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">{MISSING_HINT[missingEvidence]}</p>
+              </label>
+              <label className="text-xs text-slate-400">
+                证据来自
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-ink"
+                  value={evidenceFrom}
+                  onChange={(e) => {
+                    setEvidenceFrom(e.target.value);
+                    void patchCheckItem(sopId, item.id, { evidenceFrom: e.target.value }).then(onSaved);
+                  }}
+                >
+                  <option value="any">任一</option>
+                  <option value="global">全局机</option>
+                  <option value="detail">细节机</option>
+                </select>
+                <p className="mt-1 text-[11px] leading-4 text-slate-500">{EVIDENCE_HINT[evidenceFrom]}</p>
+              </label>
+            </div>
+          )}
         </div>
       )}
     </article>
@@ -63,6 +167,16 @@ export function SopDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [model, setModel] = useState("gpt-5.6-terra");
   const [models, setModels] = useState<{ id: string; label: string; hint: string }[]>([]);
+
+  usePageCrumbs(
+    data
+      ? [
+          { label: "工作台", to: "/" },
+          { label: "SOP手册", to: "/sops" },
+          { label: data.title },
+        ]
+      : null,
+  );
 
   const refresh = () =>
     getSop(sopId)
@@ -92,7 +206,6 @@ export function SopDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumb items={[{ label: "工作台", to: "/" }, { label: "SOP 手册", to: "/sops" }, { label: data.title }]} />
       {data.deletedAt && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           此手册已从列表删除。已有分析报告仍可查看，但不能再新建分析或重新解析。
@@ -111,12 +224,20 @@ export function SopDetailPage() {
           </div>
         </div>
         {!data.deletedAt && (
-        <Link
-          to={`/analyses/new?sopId=${data.id}`}
-          className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2"
-        >
-          用此手册分析
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            to={`/live/new?sopId=${data.id}`}
+            className="rounded-lg bg-teal px-4 py-2 text-sm text-white hover:bg-teal-2"
+          >
+            实时核验
+          </Link>
+          <Link
+            to={`/analyses/new?sopId=${data.id}`}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+          >
+            回放核验
+          </Link>
+        </div>
         )}
       </div>
 
@@ -133,10 +254,10 @@ export function SopDetailPage() {
 
       <div className="rail space-y-4 pl-10">
         {data.items.map((item) => (
-          <CheckCard key={item.id} item={item} />
+          <CheckCard key={item.id} item={item} sopId={data.id} canEdit={isAdmin} onSaved={() => void refresh()} />
         ))}
         {data.status === "ready" && data.items.length === 0 && (
-          <p className="text-slate-500">没有检查项，请尝试更换模型重新解析。</p>
+          <EmptyState title="暂无检查项" description="没有解析出检查项，可更换模型后重新解析。" />
         )}
       </div>
 
